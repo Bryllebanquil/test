@@ -1153,4 +1153,4 @@ def handle_file_chunk_from_agent(data):
 
 if __name__ == "__main__":
     print("Starting controller with Socket.IO support...")
-    socketio.run(app, host="0.0.0.0", port=8080, debug=False, keyfile=r"C:\Users\Brylle\Documents\malware\key.pem", certfile=r"C:\Users\Brylle\Documents\malware\cert.pem")
+    socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), debug=False)
