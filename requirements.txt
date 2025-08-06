@@ -1,4 +1,4 @@
-socketio
+python-socketio
 requests
 mss
 numpy
@@ -20,4 +20,5 @@ flask-socketio
 pyautogui
 speech-recognition
 websockets
-asyncio
+cryptography
+pywin32; platform_system=="Windows"

