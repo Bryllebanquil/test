@@ -3365,16 +3365,54 @@ def execute_command(command):
         elif command.strip() == "test-specific-download":
             return test_specific_download()
 
+        # Check if this is a PowerShell download command
+        is_download_command = any(keyword in command.lower() for keyword in [
+            'invoke-webrequest', 'download', 'curl', 'wget'
+        ])
+
         if WINDOWS_AVAILABLE:
-            # Explicitly use PowerShell to execute commands on Windows
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command", command],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                cwd=os.getcwd()  # Execute in the current directory
-            )
+            # For download commands, use different approach
+            if is_download_command:
+                # Use the improved download function instead of direct PowerShell
+                if 'invoke-webrequest' in command.lower():
+                    # Extract URL and destination from the command
+                    try:
+                        # Parse the Invoke-WebRequest command
+                        if 'invoke-webrequest' in command.lower():
+                            # Extract URL and OutFile from the command
+                            import re
+                            url_match = re.search(r'["\']([^"\']*\.py)["\']', command)
+                            outfile_match = re.search(r'-outfile\s+["\']([^"\']*)["\']', command, re.IGNORECASE)
+                            
+                            if url_match and outfile_match:
+                                url = url_match.group(1)
+                                destination = outfile_match.group(1)
+                                return execute_powershell_download(url, destination)
+                            else:
+                                return "Could not parse Invoke-WebRequest command. Use download-url:url:destination instead."
+                        else:
+                            return "Use download-url:url:destination for downloads"
+                    except Exception as e:
+                        return f"Error parsing download command: {e}. Use download-url:url:destination instead."
+                else:
+                    # For other download commands, try without CREATE_NO_WINDOW
+                    result = subprocess.run(
+                        ["powershell.exe", "-NoProfile", "-Command", command],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,  # Longer timeout for downloads
+                        cwd=os.getcwd()
+                    )
+            else:
+                # For non-download commands, use the original approach
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-Command", command],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    cwd=os.getcwd()
+                )
         else:
             # Use bash on Linux/Unix systems
             result = subprocess.run(
@@ -3382,7 +3420,7 @@ def execute_command(command):
                 capture_output=True,
                 text=True,
                 timeout=30,
-                cwd=os.getcwd()  # Execute in the current directory
+                cwd=os.getcwd()
             )
         
         output = result.stdout + result.stderr
