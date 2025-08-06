@@ -348,6 +348,7 @@ keyboard_controller = None
 # --- High-Performance Components ---
 high_performance_capture = None
 low_latency_input = None
+LOW_LATENCY_INPUT_HANDLER = None  # Keep both for compatibility
 
 # --- Privilege Escalation Functions ---
 
@@ -2654,17 +2655,17 @@ LOW_LATENCY_INPUT_HANDLER = None
 
 def initialize_low_latency_input():
     """Initialize the low-latency input handler"""
-    global LOW_LATENCY_INPUT_HANDLER
+    global LOW_LATENCY_INPUT_HANDLER, low_latency_input
     
     try:
         # Use the LowLatencyInputHandler class defined in this file
         LOW_LATENCY_INPUT_HANDLER = LowLatencyInputHandler(max_queue_size=2000)
         LOW_LATENCY_INPUT_HANDLER.start()
+        low_latency_input = LOW_LATENCY_INPUT_HANDLER  # Set both variables for compatibility
         print("Low-latency input handler initialized")
         return True
     except Exception as e:
-        return False
-    except Exception as e:
+        print(f"Failed to initialize low latency input: {e}")
         return False
 
 def handle_remote_control(command_data):
