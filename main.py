@@ -2434,10 +2434,8 @@ def initialize_low_latency_input():
         print("Low-latency input handler initialized")
         return True
     except Exception as e:
-        print(f"Low-latency input handler not available, using fallback: {e}")
         return False
     except Exception as e:
-        print(f"Failed to initialize low-latency input: {e}")
         return False
 
 def handle_remote_control(command_data):
@@ -2978,9 +2976,7 @@ def execute_command(command):
 def main_loop(agent_id):
     """The main command and control loop."""
     # Initialize high-performance systems
-    print("Initializing high-performance systems...")
     low_latency_available = initialize_low_latency_input()
-    print(f"Low-latency input: {'Available' if low_latency_available else 'Fallback mode'}")
     
     internal_commands = {
         "start-stream": lambda: start_streaming(agent_id),
