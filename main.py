@@ -2323,10 +2323,16 @@ CLIPBOARD_BUFFER = []
 LAST_CLIPBOARD_CONTENT = ""
 
 # --- Audio Config ---
-CHUNK = 1024
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 44100
+if PYAUDIO_AVAILABLE:
+    CHUNK = 1024
+    FORMAT = pyaudio.paInt16
+    CHANNELS = 1
+    RATE = 44100
+else:
+    CHUNK = 1024
+    FORMAT = None
+    CHANNELS = 1
+    RATE = 44100
 
 def get_or_create_agent_id():
     """
