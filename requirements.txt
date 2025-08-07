@@ -11,3 +11,6 @@ Flask-SocketIO
 python-socketio
 eventlet
 websocket-client
+websockets
+psutil
+Pillow

