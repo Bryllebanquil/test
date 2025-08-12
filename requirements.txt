@@ -1,13 +1,53 @@
+# Core web & socket dependencies
 flask
-requests
-mss
-numpy
-opencv-python
-pywin32
-PyAudio
-pynput
-pygame
-Flask-SocketIO
-python-socketio
+flask_socketio
 eventlet
-websocket-client
+gunicorn
+python-socketio
+websockets
+
+# HTTP & networking
+requests
+
+# Screen capturing & media
+mss
+opencv-python
+pygame
+dxcam >= 0.0.5; sys_platform == "win32"
+
+
+# Audio handling
+speechrecognition
+sounddevice; sys_platform != "win32"
+
+# Input control
+pynput
+keyboard
+pyautogui
+
+# System utilities
+psutil
+py-cpuinfo
+pywin32; sys_platform == "win32"
+WMI; sys_platform == "win32"
+
+# Image processing
+pillow
+PyTurboJPEG >= 1.7.0
+
+# Performance / async / compression
+numpy
+aiofiles >= 23.0.0
+msgpack >= 1.0.0
+lz4 >= 4.0.0
+zstandard >= 0.21.0
+xxhash >= 3.2.0
+uvloop >= 0.17.0; sys_platform != "win32"
+Cython >= 3.0.0
+setuptools >= 65.0.0
+
+# Security
+cryptography
+
+
+
